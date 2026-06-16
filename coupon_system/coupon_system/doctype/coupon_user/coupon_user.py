@@ -16,5 +16,5 @@ class CouponUser(Document):
 		points_balance: DF.Float
 	# end: auto-generated types
 
-	def after_load(self):
-		self.points_balance = _get_balance(self.phone)
+	def onload(self):
+		self.set_onload("points_balance", _get_balance(self.phone))

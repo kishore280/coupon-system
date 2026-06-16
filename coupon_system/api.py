@@ -245,7 +245,8 @@ def bulk_generate_cards(items):
 				])
 
 		frappe.db.bulk_insert("Coupon Card", fields=fields, values=all_values)
-		return {"success": True, "count": len(all_values)}
+		codes = [row[2] for row in all_values]  # index 2 = code field
+		return {"success": True, "count": len(codes), "codes": codes}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
 
