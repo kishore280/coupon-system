@@ -1,4 +1,4 @@
-import random
+import secrets
 import string
 
 import frappe
@@ -34,9 +34,39 @@ def _get_or_create_user(phone, full_name=None):
 
 def _generate_code():
 	chars = string.ascii_uppercase + string.digits
-	part1 = "".join(random.choices(chars, k=4))
-	part2 = "".join(random.choices(chars, k=4))
+	part1 = "".join(secrets.choice(chars) for _ in range(4))
+	part2 = "".join(secrets.choice(chars) for _ in range(4))
 	return f"PAINT-{part1}-{part2}"
+
+
+def _validate_card_row(row):
+	"""Validate one batch-row dict. Raises frappe.ValidationError on bad input."""
+	try:
+		qty = int(row["quantity"])
+	except (KeyError, TypeError, ValueError):
+		frappe.throw(_("quantity must be a positive integer"))
+	if qty <= 0:
+		frappe.throw(_("quantity must be a positive integer"))
+	if qty > 10_000:
+		frappe.throw(_("quantity cannot exceed 10,000 per call"))
+
+	if not row.get("item_code"):
+		frappe.throw(_("item_code is required"))
+
+	try:
+		pts = flt(row.get("points_value", 0))
+	except (TypeError, ValueError):
+		frappe.throw(_("points_value must be a number"))
+	if pts <= 0:
+		frappe.throw(_("points_value must be greater than 0"))
+
+	expiry = row.get("expiry_date")
+	if not expiry:
+		frappe.throw(_("expiry_date is required"))
+	if getdate(expiry) < getdate(today()):
+		frappe.throw(_("expiry_date must be in the future"))
+
+	return qty, pts, expiry
 
 
 @frappe.whitelist()
@@ -56,18 +86,23 @@ def scan(phone, code, full_name=None):
 
 		_get_or_create_user(phone, full_name)
 
-		card.is_used = 1
-		card.used_by_phone = phone
-		card.scanned_at = now_datetime()
-		card.save(ignore_permissions=True)
+		frappe.db.savepoint("coupon_scan")
+		try:
+			card.is_used = 1
+			card.used_by_phone = phone
+			card.scanned_at = now_datetime()
+			card.save(ignore_permissions=True)
 
-		ledger = frappe.new_doc("Coupon Ledger")
-		ledger.phone = phone
-		ledger.type = "CREDIT"
-		ledger.points = card.points_value
-		ledger.description = f"Card {code} scanned"
-		ledger.timestamp = now_datetime()
-		ledger.insert(ignore_permissions=True)
+			ledger = frappe.new_doc("Coupon Ledger")
+			ledger.phone = phone
+			ledger.type = "CREDIT"
+			ledger.points = card.points_value
+			ledger.description = f"Card {code} scanned"
+			ledger.timestamp = now_datetime()
+			ledger.insert(ignore_permissions=True)
+		except Exception:
+			frappe.db.rollback(save_point="coupon_scan")
+			raise
 
 		return {
 			"success": True,
@@ -133,19 +168,34 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 
 			_get_or_create_user(phone)
 
-			card.is_used = 1
-			card.used_by_phone = phone
-			card.scanned_at = now_datetime()
-			card.save(ignore_permissions=True)
+			frappe.db.savepoint("coupon_redeem")
+			try:
+				card.is_used = 1
+				card.used_by_phone = phone
+				card.scanned_at = now_datetime()
+				card.save(ignore_permissions=True)
 
-			credit = frappe.new_doc("Coupon Ledger")
-			credit.phone = phone
-			credit.type = "CREDIT"
-			credit.points = card.points_value
-			credit.description = f"Card {code} redeemed at branch"
-			credit.branch = branch
-			credit.timestamp = now_datetime()
-			credit.insert(ignore_permissions=True)
+				credit = frappe.new_doc("Coupon Ledger")
+				credit.phone = phone
+				credit.type = "CREDIT"
+				credit.points = card.points_value
+				credit.description = f"Card {code} redeemed at branch"
+				credit.branch = branch
+				credit.timestamp = now_datetime()
+				credit.insert(ignore_permissions=True)
+
+				debit = frappe.new_doc("Coupon Ledger")
+				debit.phone = phone
+				debit.type = "DEBIT"
+				debit.points = amount
+				debit.description = f"Redeemed at {branch}"
+				debit.branch = branch
+				debit.invoice_no = invoice_no
+				debit.timestamp = now_datetime()
+				debit.insert(ignore_permissions=True)
+			except Exception:
+				frappe.db.rollback(save_point="coupon_redeem")
+				raise
 
 		else:
 			if not frappe.db.exists("Coupon User", phone):
@@ -155,15 +205,20 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 			if current_balance < amount:
 				frappe.throw(_("Insufficient balance"))
 
-		debit = frappe.new_doc("Coupon Ledger")
-		debit.phone = phone
-		debit.type = "DEBIT"
-		debit.points = amount
-		debit.description = f"Redeemed at {branch}"
-		debit.branch = branch
-		debit.invoice_no = invoice_no
-		debit.timestamp = now_datetime()
-		debit.insert(ignore_permissions=True)
+			frappe.db.savepoint("coupon_redeem")
+			try:
+				debit = frappe.new_doc("Coupon Ledger")
+				debit.phone = phone
+				debit.type = "DEBIT"
+				debit.points = amount
+				debit.description = f"Redeemed at {branch}"
+				debit.branch = branch
+				debit.invoice_no = invoice_no
+				debit.timestamp = now_datetime()
+				debit.insert(ignore_permissions=True)
+			except Exception:
+				frappe.db.rollback(save_point="coupon_redeem")
+				raise
 
 		return {
 			"success": True,
@@ -180,6 +235,10 @@ def get_card_images(codes, img_type="qr"):
 
 	from coupon_system.utils import get_coupon_barcode, get_coupon_qr
 
+	roles = frappe.get_roles()
+	if "System Manager" not in roles and "Coupon Manager" not in roles:
+		frappe.throw(_("Not permitted"))
+
 	if isinstance(codes, str):
 		codes = json.loads(codes)
 	fn = get_coupon_qr if img_type == "qr" else get_coupon_barcode
@@ -189,14 +248,21 @@ def get_card_images(codes, img_type="qr"):
 @frappe.whitelist()
 def generate_cards(quantity, item_code, points_value, expiry_date,
 				   naming_series=None, batch_no=None, work_order=None):
-	"""Generate a single batch of coupon cards. Original signature kept for backward compatibility."""
+	"""Generate a single batch of coupon cards. Original signature kept for backward compat."""
 	try:
 		roles = frappe.get_roles()
 		if "System Manager" not in roles and "Coupon Manager" not in roles:
 			frappe.throw(_("Not permitted"))
 
+		qty, pts, expiry = _validate_card_row({
+			"quantity": quantity,
+			"item_code": item_code,
+			"points_value": points_value,
+			"expiry_date": expiry_date,
+		})
+
 		return _generate_batch(
-			int(quantity), item_code, flt(points_value), expiry_date,
+			qty, item_code, pts, expiry,
 			naming_series or "CC-.YYYY.-.#####",
 			batch_no or "", work_order or "",
 		)
@@ -221,6 +287,18 @@ def bulk_generate_cards(items):
 		if isinstance(items, str):
 			items = json.loads(items)
 
+		if not items:
+			frappe.throw(_("items list cannot be empty"))
+
+		# Validate all rows before any DB writes
+		validated = []
+		for i, row in enumerate(items, start=1):
+			try:
+				qty, pts, expiry = _validate_card_row(row)
+			except frappe.ValidationError as e:
+				frappe.throw(_("Row {0}: {1}").format(i, str(e)))
+			validated.append((qty, pts, expiry, row))
+
 		# Shared seen-set prevents cross-batch collisions without loading all DB codes
 		seen = set()
 		now = now_datetime()
@@ -232,14 +310,13 @@ def bulk_generate_cards(items):
 		]
 		all_values = []
 
-		for row in items:
-			quantity = int(row["quantity"])
+		for qty, pts, expiry, row in validated:
 			series = row.get("naming_series") or "CC-.YYYY.-.#####"
-			codes = _unique_codes(quantity, seen)  # seen grows across rows
+			codes = _unique_codes(qty, seen)  # seen grows across rows
 			for code in codes:
 				all_values.append([
 					make_autoname(series), series, code,
-					row["item_code"], flt(row["points_value"]), row["expiry_date"],
+					row["item_code"], pts, expiry,
 					row.get("batch_no") or "", row.get("work_order") or "",
 					0, 0, now, now, user, user,
 				])
@@ -247,7 +324,7 @@ def bulk_generate_cards(items):
 		frappe.db.bulk_insert("Coupon Card", fields=fields, values=all_values)
 		codes = [row[2] for row in all_values]  # index 2 = code field
 		return {"success": True, "count": len(codes), "codes": codes}
-	except frappe.ValidationError as e:
+	except Exception as e:
 		return {"success": False, "error": str(e)}
 
 

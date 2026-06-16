@@ -84,8 +84,7 @@
    "fieldname": "is_used",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Is Used",
-   "read_only": 1
+   "label": "Is Used"
   },
   {
    "fieldname": "used_by_phone",

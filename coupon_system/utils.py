@@ -6,8 +6,9 @@ import frappe
 
 
 def get_coupon_qr(code):
-	base_url = frappe.db.get_single_value("Coupon System Settings", "scan_base_url") \
-		or "https://coupon.yourcompany.com/scan"
+	base_url = frappe.db.get_single_value("Coupon System Settings", "scan_base_url")
+	if not base_url:
+		frappe.throw(frappe._("Coupon System Settings: scan_base_url is not configured"))
 	url = f"{base_url}?code={code}"
 	img = qrcode.make(url)
 	buffer = BytesIO()
