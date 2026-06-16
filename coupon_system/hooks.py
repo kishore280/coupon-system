@@ -1,8 +1,8 @@
 app_name = "coupon_system"
 app_title = "Coupon System"
-app_publisher = "Oxifix"
+app_publisher = "Kishore"
 app_description = "Coupon loyalty points system"
-app_email = "dev@oxifix.com"
+app_email = "kishore.m@lyncspace.com"
 app_license = "mit"
 
 jinja = {
@@ -12,6 +12,10 @@ jinja = {
 doctype_list_js = {
 	"Coupon Card": "public/js/coupon_card_list.js"
 }
+
+fixtures = [
+	{"dt": "Role", "filters": [["role_name", "=", "Coupon Manager"]]},
+]
 
 # Apps
 # ------------------

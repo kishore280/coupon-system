@@ -4,7 +4,7 @@ import frappe
 
 
 def get_context(context):
-	frappe.only_for("System Manager")
+	frappe.only_for(["System Manager", "Coupon Manager"])
 	context.no_cache = 1
 	context.full_width = 1
 

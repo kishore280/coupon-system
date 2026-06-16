@@ -9,7 +9,7 @@
  "fields": [
   {
    "default": "https://coupon.yourcompany.com/scan",
-   "description": "Base URL encoded into each QR code. Format: https://yourdomain.com/scan — the card code is appended as ?code=PAINT-XXXX-XXXX",
+   "description": "Base URL encoded into each QR code. Format: https://yourdomain.com/scan \u2014 the card code is appended as ?code=PAINT-XXXX-XXXX",
    "fieldname": "scan_base_url",
    "fieldtype": "Data",
    "label": "QR Scan Base URL",
@@ -29,6 +29,13 @@
    "delete": 0,
    "read": 1,
    "role": "System Manager",
+   "write": 1
+  },
+  {
+   "role": "Coupon Manager",
+   "create": 1,
+   "delete": 0,
+   "read": 1,
    "write": 1
   }
  ],
