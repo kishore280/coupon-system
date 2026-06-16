@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.naming import make_autoname
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Sum
-from frappe.utils import flt, getdate, now_datetime, today
+from frappe.utils import cint, flt, getdate, now_datetime, today
 
 
 def _get_balance(phone):
@@ -54,11 +54,11 @@ def _validate_card_row(row):
 		frappe.throw(_("item_code is required"))
 
 	try:
-		pts = flt(row.get("points_value", 0))
+		pts = cint(row.get("points_value", 0))
 	except (TypeError, ValueError):
-		frappe.throw(_("points_value must be a number"))
+		frappe.throw(_("points_value must be a positive integer"))
 	if pts <= 0:
-		frappe.throw(_("points_value must be greater than 0"))
+		frappe.throw(_("points_value must be a positive integer"))
 
 	expiry = row.get("expiry_date")
 	if not expiry:
@@ -145,7 +145,7 @@ def balance(phone):
 @frappe.whitelist()
 def redeem(phone, amount, branch, invoice_no, code=None):
 	try:
-		amount = flt(amount)
+		amount = cint(amount)
 
 		if frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "type": "DEBIT"}):
 			frappe.throw(_("Already redeemed for this invoice"))
@@ -163,7 +163,7 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 			if card.is_used:
 				frappe.throw(_("Card already redeemed"))
 
-			if flt(card.points_value) < amount:
+			if cint(card.points_value) < amount:
 				frappe.throw(_("Insufficient balance"))
 
 			_get_or_create_user(phone)

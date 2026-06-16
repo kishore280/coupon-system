@@ -32,7 +32,7 @@
   },
   {
    "fieldname": "points",
-   "fieldtype": "Float",
+   "fieldtype": "Int",
    "in_list_view": 1,
    "label": "Points",
    "reqd": 1

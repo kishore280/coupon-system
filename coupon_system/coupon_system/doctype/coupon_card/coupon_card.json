@@ -47,7 +47,7 @@
   },
   {
    "fieldname": "points_value",
-   "fieldtype": "Float",
+   "fieldtype": "Int",
    "in_list_view": 1,
    "label": "Points Value",
    "reqd": 1
