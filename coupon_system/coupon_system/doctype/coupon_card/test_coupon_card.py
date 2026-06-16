@@ -4,7 +4,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, today
 
-from coupon_system.api import balance, generate_cards, redeem, scan
+from coupon_system.api import balance, bulk_generate_cards, generate_cards, redeem, scan
 
 _ITEM_CODE = None
 
@@ -154,3 +154,71 @@ class TestCouponCard(FrappeTestCase):
 			self.assertTrue(frappe.db.exists("Coupon Card", {"code": code}))
 		for code in result["codes"]:
 			frappe.db.delete("Coupon Card", {"code": code})
+
+	def test_generate_cards_persists_naming_series(self):
+		result = generate_cards(
+			quantity=2,
+			item_code=get_item_code(),
+			points_value=100,
+			expiry_date=add_days(today(), 365),
+			naming_series="CC-.YYYY.-.#####",
+		)
+		self.assertTrue(result["success"])
+		for code in result["codes"]:
+			doc = frappe.get_doc("Coupon Card", {"code": code})
+			self.assertEqual(doc.naming_series, "CC-.YYYY.-.#####")
+			self.assertTrue(doc.name.startswith("CC-"))
+		for code in result["codes"]:
+			frappe.db.delete("Coupon Card", {"code": code})
+
+	def test_bulk_generate_cards_multiple_batches(self):
+		expiry = add_days(today(), 365)
+		items = [
+			{"item_code": get_item_code(), "quantity": 3, "points_value": 50, "expiry_date": expiry},
+			{"item_code": get_item_code(), "quantity": 4, "points_value": 100, "expiry_date": expiry},
+		]
+		result = bulk_generate_cards(items)
+		self.assertTrue(result["success"])
+		self.assertEqual(result["count"], 7)
+
+		# All created cards exist in DB
+		created = frappe.db.get_all(
+			"Coupon Card",
+			filters={"expiry_date": expiry, "item_code": get_item_code()},
+			fields=["code", "points_value"],
+			order_by="creation desc",
+			limit=7,
+		)
+		self.assertEqual(len(created), 7)
+
+		# Codes are globally unique
+		codes = [r.code for r in created]
+		self.assertEqual(len(codes), len(set(codes)))
+
+		for r in created:
+			frappe.db.delete("Coupon Card", {"code": r.code})
+
+	def test_bulk_generate_cards_no_cross_batch_collisions(self):
+		"""All codes across all batches must be unique — no intra-call duplicates."""
+		expiry = add_days(today(), 365)
+		items = [
+			{"item_code": get_item_code(), "quantity": 10, "points_value": 50, "expiry_date": expiry},
+			{"item_code": get_item_code(), "quantity": 10, "points_value": 75, "expiry_date": expiry},
+			{"item_code": get_item_code(), "quantity": 10, "points_value": 100, "expiry_date": expiry},
+		]
+		result = bulk_generate_cards(items)
+		self.assertTrue(result["success"])
+		self.assertEqual(result["count"], 30)
+
+		created = frappe.db.get_all(
+			"Coupon Card",
+			filters={"expiry_date": expiry},
+			fields=["code"],
+			order_by="creation desc",
+			limit=30,
+		)
+		codes = [r.code for r in created]
+		self.assertEqual(len(codes), len(set(codes)), "Duplicate codes found across batches")
+
+		for r in created:
+			frappe.db.delete("Coupon Card", {"code": r.code})

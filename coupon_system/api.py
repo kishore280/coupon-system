@@ -221,11 +221,8 @@ def bulk_generate_cards(items):
 		if isinstance(items, str):
 			items = json.loads(items)
 
-		total = 0
-		# Collect all existing codes once — avoids per-batch DB round trips
-		CC = frappe.qb.DocType("Coupon Card")
-		existing_codes = {r[0] for r in frappe.qb.from_(CC).select(CC.code).run()}
-
+		# Shared seen-set prevents cross-batch collisions without loading all DB codes
+		seen = set()
 		now = now_datetime()
 		user = frappe.session.user
 		fields = [
@@ -238,10 +235,7 @@ def bulk_generate_cards(items):
 		for row in items:
 			quantity = int(row["quantity"])
 			series = row.get("naming_series") or "CC-.YYYY.-.#####"
-			codes = _unique_codes(quantity, existing_codes)
-			if len(codes) < quantity:
-				frappe.throw(_("Could not generate enough unique codes for {0}.").format(row["item_code"]))
-
+			codes = _unique_codes(quantity, seen)  # seen grows across rows
 			for code in codes:
 				all_values.append([
 					make_autoname(series), series, code,
@@ -249,35 +243,54 @@ def bulk_generate_cards(items):
 					row.get("batch_no") or "", row.get("work_order") or "",
 					0, 0, now, now, user, user,
 				])
-			total += quantity
 
 		frappe.db.bulk_insert("Coupon Card", fields=fields, values=all_values)
-		return {"success": True, "count": total}
+		return {"success": True, "count": len(all_values)}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
 
 
-def _unique_codes(quantity, existing_codes):
-	"""Generate `quantity` unique PAINT-XXXX-XXXX codes not in existing_codes."""
-	codes = []
-	max_attempts = quantity * 20
-	attempts = 0
-	while len(codes) < quantity and attempts < max_attempts:
-		code = _generate_code()
-		if code not in existing_codes:
-			codes.append(code)
-			existing_codes.add(code)
-		attempts += 1
-	return codes
+def _unique_codes(quantity, seen=None):
+	"""
+	Generate `quantity` unique PAINT-XXXX-XXXX codes.
+
+	Only checks *candidate* codes against the DB — O(quantity) memory regardless
+	of total cards in the table.  `seen` is a mutable set the caller can pass in
+	to avoid cross-batch collisions inside bulk_generate_cards.
+	"""
+	if seen is None:
+		seen = set()
+
+	result = []
+	CC = frappe.qb.DocType("Coupon Card")
+
+	while len(result) < quantity:
+		# Overshoot by 3× to minimise round-trips; collision rate is negligible
+		# for PAINT-XXXX-XXXX (36^8 ≈ 2.8 trillion combinations).
+		candidates = list({_generate_code() for _ in range((quantity - len(result)) * 3)})
+		candidates = [c for c in candidates if c not in seen]
+
+		if not candidates:
+			continue  # astronomically unlikely — all candidates were in seen
+
+		taken = {
+			r[0]
+			for r in frappe.qb.from_(CC)
+			.select(CC.code)
+			.where(CC.code.isin(candidates))
+			.run()
+		}
+		fresh = [c for c in candidates if c not in taken]
+		batch = fresh[: quantity - len(result)]
+		result.extend(batch)
+		seen.update(batch)
+
+	return result
 
 
 def _generate_batch(quantity, item_code, points_value, expiry_date,
 					naming_series, batch_no, work_order):
-	CC = frappe.qb.DocType("Coupon Card")
-	existing_codes = {r[0] for r in frappe.qb.from_(CC).select(CC.code).run()}
-	codes = _unique_codes(quantity, existing_codes)
-	if len(codes) < quantity:
-		frappe.throw(_("Could not generate enough unique codes. Try again."))
+	codes = _unique_codes(quantity)
 
 	now = now_datetime()
 	user = frappe.session.user
@@ -292,4 +305,4 @@ def _generate_batch(quantity, item_code, points_value, expiry_date,
 		for code in codes
 	]
 	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)
-	return {"success": True, "count": len(codes)}
+	return {"success": True, "count": len(codes), "codes": codes}
