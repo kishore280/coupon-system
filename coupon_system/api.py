@@ -72,10 +72,15 @@ def _validate_card_row(row):
 @frappe.whitelist()
 def scan(phone, code, full_name=None):
 	try:
+		if not phone or not str(phone).strip():
+			frappe.throw(_("phone is required"))
+
 		card_name = frappe.db.get_value("Coupon Card", {"code": code}, "name")
 		if not card_name:
 			frappe.throw(_("Card not found"))
 
+		# Lock the row before reading so concurrent scans can't both see is_used=0
+		frappe.db.sql("SELECT name FROM `tabCoupon Card` WHERE name = %s FOR UPDATE", card_name)
 		card = frappe.get_doc("Coupon Card", card_name)
 
 		if getdate(card.expiry_date) < getdate(today()):
@@ -84,10 +89,11 @@ def scan(phone, code, full_name=None):
 		if card.is_used:
 			frappe.throw(_("Card already redeemed"))
 
-		_get_or_create_user(phone, full_name)
-
+		# _get_or_create_user is inside the savepoint so a write failure rolls it back
 		frappe.db.savepoint("coupon_scan")
 		try:
+			_get_or_create_user(phone, full_name)
+
 			card.is_used = 1
 			card.used_by_phone = phone
 			card.scanned_at = now_datetime()
@@ -145,7 +151,12 @@ def balance(phone):
 @frappe.whitelist()
 def redeem(phone, amount, branch, invoice_no, code=None):
 	try:
+		if not phone or not str(phone).strip():
+			frappe.throw(_("phone is required"))
+
 		amount = cint(amount)
+		if amount <= 0:
+			frappe.throw(_("Redemption amount must be greater than 0"))
 
 		if frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "type": "DEBIT"}):
 			frappe.throw(_("Already redeemed for this invoice"))
@@ -155,6 +166,8 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 			if not card_name:
 				frappe.throw(_("Card not found"))
 
+			# Lock the row before reading so concurrent redemptions can't both see is_used=0
+			frappe.db.sql("SELECT name FROM `tabCoupon Card` WHERE name = %s FOR UPDATE", card_name)
 			card = frappe.get_doc("Coupon Card", card_name)
 
 			if getdate(card.expiry_date) < getdate(today()):
@@ -166,10 +179,10 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 			if cint(card.points_value) < amount:
 				frappe.throw(_("Insufficient balance"))
 
-			_get_or_create_user(phone)
-
 			frappe.db.savepoint("coupon_redeem")
 			try:
+				_get_or_create_user(phone)
+
 				card.is_used = 1
 				card.used_by_phone = phone
 				card.scanned_at = now_datetime()

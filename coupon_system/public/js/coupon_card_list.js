@@ -64,6 +64,12 @@ frappe.listview_settings["Coupon Card"] = {
 						fieldtype: "Data",
 						label: __("Batch No"),
 					},
+					{ fieldtype: "Column Break" },
+					{
+						fieldname: "work_order",
+						fieldtype: "Data",
+						label: __("Work Order"),
+					},
 				],
 				primary_action_label: __("Generate"),
 				primary_action(values) {
