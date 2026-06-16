@@ -187,11 +187,29 @@ def get_card_images(codes, img_type="qr"):
 
 
 @frappe.whitelist()
-def generate_cards(items):
+def generate_cards(quantity, item_code, points_value, expiry_date,
+				   naming_series=None, batch_no=None, work_order=None):
+	"""Generate a single batch of coupon cards. Original signature kept for backward compatibility."""
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+
+		return _generate_batch(
+			int(quantity), item_code, flt(points_value), expiry_date,
+			naming_series or "CC-.YYYY.-.#####",
+			batch_no or "", work_order or "",
+		)
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def bulk_generate_cards(items):
 	"""
-	items: list of {quantity, item_code, points_value, expiry_date,
-	                naming_series, batch_no, work_order}
-	Each row generates `quantity` unique coupon cards.
+	Generate multiple batches in one call.
+	items: JSON list of {quantity, item_code, points_value, expiry_date,
+	                     naming_series, batch_no, work_order}
 	"""
 	import json
 
@@ -203,7 +221,8 @@ def generate_cards(items):
 		if isinstance(items, str):
 			items = json.loads(items)
 
-		# Load all existing codes once to avoid collisions across rows
+		total = 0
+		# Collect all existing codes once — avoids per-batch DB round trips
 		CC = frappe.qb.DocType("Coupon Card")
 		existing_codes = {r[0] for r in frappe.qb.from_(CC).select(CC.code).run()}
 
@@ -218,35 +237,59 @@ def generate_cards(items):
 
 		for row in items:
 			quantity = int(row["quantity"])
-			item_code = row["item_code"]
-			points_value = flt(row["points_value"])
-			expiry_date = row["expiry_date"]
-			batch_no = row.get("batch_no") or ""
-			work_order = row.get("work_order") or ""
 			series = row.get("naming_series") or "CC-.YYYY.-.#####"
-
-			codes = []
-			attempts = 0
-			max_attempts = quantity * 20
-			while len(codes) < quantity and attempts < max_attempts:
-				code = _generate_code()
-				if code not in existing_codes:
-					codes.append(code)
-					existing_codes.add(code)
-				attempts += 1
-
+			codes = _unique_codes(quantity, existing_codes)
 			if len(codes) < quantity:
-				frappe.throw(_("Could not generate enough unique codes for row {0}. Try again.").format(item_code))
+				frappe.throw(_("Could not generate enough unique codes for {0}.").format(row["item_code"]))
 
 			for code in codes:
-				name = make_autoname(series)
 				all_values.append([
-					name, series, code, item_code, points_value, expiry_date,
-					batch_no, work_order, 0, 0, now, now, user, user,
+					make_autoname(series), series, code,
+					row["item_code"], flt(row["points_value"]), row["expiry_date"],
+					row.get("batch_no") or "", row.get("work_order") or "",
+					0, 0, now, now, user, user,
 				])
+			total += quantity
 
 		frappe.db.bulk_insert("Coupon Card", fields=fields, values=all_values)
-
-		return {"success": True, "count": len(all_values)}
+		return {"success": True, "count": total}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
+
+
+def _unique_codes(quantity, existing_codes):
+	"""Generate `quantity` unique PAINT-XXXX-XXXX codes not in existing_codes."""
+	codes = []
+	max_attempts = quantity * 20
+	attempts = 0
+	while len(codes) < quantity and attempts < max_attempts:
+		code = _generate_code()
+		if code not in existing_codes:
+			codes.append(code)
+			existing_codes.add(code)
+		attempts += 1
+	return codes
+
+
+def _generate_batch(quantity, item_code, points_value, expiry_date,
+					naming_series, batch_no, work_order):
+	CC = frappe.qb.DocType("Coupon Card")
+	existing_codes = {r[0] for r in frappe.qb.from_(CC).select(CC.code).run()}
+	codes = _unique_codes(quantity, existing_codes)
+	if len(codes) < quantity:
+		frappe.throw(_("Could not generate enough unique codes. Try again."))
+
+	now = now_datetime()
+	user = frappe.session.user
+	fields = [
+		"name", "naming_series", "code", "item_code", "points_value",
+		"expiry_date", "batch_no", "work_order", "is_used", "docstatus",
+		"creation", "modified", "owner", "modified_by",
+	]
+	values = [
+		[make_autoname(naming_series), naming_series, code, item_code, points_value,
+		 expiry_date, batch_no, work_order, 0, 0, now, now, user, user]
+		for code in codes
+	]
+	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)
+	return {"success": True, "count": len(codes)}
