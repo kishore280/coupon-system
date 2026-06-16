@@ -1,0 +1,21 @@
+import frappe
+from frappe.model.document import Document
+
+
+class CouponCard(Document):
+	# begin: auto-generated types
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		code: DF.Data
+		item_code: DF.Link
+		points_value: DF.Float
+		expiry_date: DF.Date
+		batch_no: DF.Data | None
+		work_order: DF.Data | None
+		is_used: DF.Check
+		used_by_phone: DF.Data | None
+		scanned_at: DF.Datetime | None
+	# end: auto-generated types

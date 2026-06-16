@@ -5,6 +5,14 @@ app_description = "Coupon loyalty points system"
 app_email = "dev@oxifix.com"
 app_license = "mit"
 
+jinja = {
+	"methods": ["coupon_system.utils.get_coupon_qr", "coupon_system.utils.get_coupon_barcode"]
+}
+
+doctype_list_js = {
+	"Coupon Card": "public/js/coupon_card_list.js"
+}
+
 # Apps
 # ------------------
 

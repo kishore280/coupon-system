@@ -1,0 +1,375 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Coupon Cards ({{ total }}){% endblock %}
+
+{% block style %}
+<style>
+  /* hide all website chrome — navbar, breadcrumbs, page header, footer */
+  nav.navbar, .page-breadcrumbs, .page-header, .page-footer,
+  footer, .web-footer, #footer-address { display: none !important; }
+  .page-content-wrapper { padding: 0 !important; }
+  .page_content { padding: 0 !important; }
+  main { margin: 0 !important; padding: 0 !important; max-width: none !important; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fff; font-family: Arial, sans-serif; }
+
+  /* ── Control bar ── */
+  .no-print {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #f0f0f0;
+    border-bottom: 1px solid #ccc;
+    padding: 10px 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    font-size: 13px;
+  }
+  .ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-left: 1px solid #ccc;
+    padding-left: 14px;
+  }
+  .ctrl-group:first-child { border-left: none; padding-left: 0; }
+  .ctrl-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .ctrl-group select { padding: 2px 4px; font-size: 13px; }
+  #progress { font-size: 12px; color: #666; }
+  .btn-print {
+    margin-left: auto;
+    padding: 6px 18px;
+    background: #333;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-print:disabled { background: #999; cursor: not-allowed; }
+  .btn-print:not(:disabled):hover { background: #111; }
+
+  /* ── Page layout ── */
+  .coupon-page {
+    width: 210mm;
+    height: 297mm;
+    padding: 8mm;
+    display: grid;
+    gap: 4mm;
+    page-break-after: always;
+    break-after: page;
+    overflow: hidden;
+  }
+
+  /* ── Individual card — NOT .card to avoid Bootstrap's .card component CSS ── */
+  .coupon-card {
+    border: 1px solid #333;
+    border-radius: 4mm;
+    padding: 4mm;
+    text-align: center;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .coupon-card.loading .img-qr,
+  .coupon-card.loading .img-barcode { opacity: 0.25; }
+
+  /*
+    Images: use --img-max-h set per-page by JS (concrete mm, not %).
+    Percentage max-height on images in flex-column containers doesn't
+    reliably resolve in Chrome/Safari when height comes from a grid cell
+    rather than an explicit height: property (Flexbugs #197, #84).
+  */
+  .img-qr {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 38mm;
+    max-height: var(--img-max-h, 38mm);
+    object-fit: contain;
+  }
+  .img-barcode {
+    display: none;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: var(--img-max-h, 18mm);
+    object-fit: contain;
+  }
+  body.show-barcode .img-qr     { display: none; }
+  body.show-barcode .img-barcode { display: block; }
+
+  body.hide-code   .field-code   { display: none; }
+  body.hide-points .field-points { display: none; }
+  body.hide-expiry .field-expiry { display: none; }
+
+  /* ── Typography ── */
+  .brand        { font-size: 7pt; color: #999; text-transform: uppercase; letter-spacing: 2px; }
+  .field-code   { font-size: 8pt; font-weight: bold; letter-spacing: 1px; margin-top: 2mm; }
+  .field-points { font-size: 13pt; font-weight: bold; margin-top: 1mm; }
+  .field-expiry { font-size: 7pt; color: #666; margin-top: 1mm; }
+
+  #card-pool { display: none; }
+
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+  @media print {
+    html, body {
+      width: 210mm !important;
+      min-width: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      background: #fff !important;
+    }
+    /*
+      Flatten Frappe's wrapper divs: display:block + zero out geometry
+      instead of display:contents which is unreliable in print engines.
+      Frappe web.html wraps: div#page-print_cards > .page-content-wrapper
+        > main > .page-header-wrapper + .page_content > #pages-container
+    */
+    #page-print_cards,
+    .page-content-wrapper,
+    main,
+    .page-header-wrapper,
+    .page_content,
+    #pages-container {
+      display: block !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      width: 100% !important;
+      height: auto !important;
+      max-width: none !important;
+      overflow: visible !important;
+    }
+    /* Hide all chrome elements */
+    nav.navbar, .page-breadcrumbs, .page-header, .page-footer,
+    footer, .web-footer, #footer-address, .no-print { display: none !important; }
+    /* Each A4 sheet — explicit size so print engine doesn't second-guess it */
+    .coupon-page {
+      display: grid !important;
+      width: 210mm !important;
+      height: 297mm !important;
+      overflow: hidden !important;
+      page-break-after: always;
+      break-after: page;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block page_content %}
+
+<!-- Control bar -->
+<div class="no-print">
+  <div class="ctrl-group">
+    <strong>{{ total }} cards</strong>
+    <span id="progress"></span>
+  </div>
+
+  <div class="ctrl-group">
+    <span>Image:</span>
+    <label><input type="radio" name="imgtype" value="qr" checked onchange="onImgTypeChange('qr')"> QR Code</label>
+    <label><input type="radio" name="imgtype" value="barcode" onchange="onImgTypeChange('barcode')"> Barcode</label>
+  </div>
+
+  <div class="ctrl-group">
+    <span>Show:</span>
+    <label><input type="checkbox" checked onchange="toggleField('code', this.checked)"> Code</label>
+    <label><input type="checkbox" checked onchange="toggleField('points', this.checked)"> Points</label>
+    <label><input type="checkbox" checked onchange="toggleField('expiry', this.checked)"> Expiry</label>
+  </div>
+
+  <div class="ctrl-group">
+    <label>Columns:
+      <select id="colCount" onchange="buildPages()">
+        <option value="1">1</option>
+        <option value="2" selected>2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
+    <label>Rows/page:
+      <select id="rowCount" onchange="buildPages()">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5" selected>5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="10">10</option>
+      </select>
+    </label>
+  </div>
+
+  <button class="btn-print" id="printBtn" disabled onclick="window.print()">Loading…</button>
+</div>
+
+<!-- Hidden card pool: metadata only, images fetched lazily -->
+<div id="card-pool">
+  {% for card in cards %}
+  <div class="coupon-card loading" data-code="{{ card.code }}">
+    <div class="brand">Scan &amp; Earn</div>
+    <img class="img-qr"      src="" alt="{{ card.code }}">
+    <img class="img-barcode" src="" alt="{{ card.code }}">
+    <div class="field-code">{{ card.code }}</div>
+    <div class="field-points">{{ card.points_value | int }} Points</div>
+    <div class="field-expiry">Valid till {{ frappe.format(card.expiry_date, {'fieldtype': 'Date'}) }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div id="pages-container"></div>
+
+{% endblock %}
+
+{% block script %}
+<script>
+var BATCH = 20;
+var currentImgType = "qr";
+var loadedTypes = {};
+var totalCards = {{ total }};
+var allCodes = Array.from(document.querySelectorAll("#card-pool .coupon-card")).map(function(c) {
+  return c.dataset.code;
+});
+
+function buildPages() {
+  var cols = +document.getElementById("colCount").value;
+  var rows = +document.getElementById("rowCount").value;
+  var perPage = cols * rows;
+  var gap = 4, pad = 16;  /* mm — gap between cells, total padding (8mm × 2 sides) */
+  var cellW = ((210 - pad) - (cols - 1) * gap) / cols;
+  var cellH = ((297 - pad) - (rows - 1) * gap) / rows;
+  /*
+    Compute concrete mm value for image max-height (55% of cell, capped at 38mm).
+    Set via CSS custom property on each page element — avoids Flexbugs #197 where
+    percentage max-height on images inside flex-column containers resolves to 0 in
+    Chrome/Safari when height comes from a grid track rather than an explicit height.
+  */
+  var imgMaxH = Math.min(38, cellH * 0.55).toFixed(2) + "mm";
+
+  var pool = document.querySelectorAll("#card-pool .coupon-card");
+  var container = document.getElementById("pages-container");
+  container.innerHTML = "";
+  for (var i = 0; i < pool.length; i += perPage) {
+    var page = document.createElement("div");
+    page.className = "coupon-page";
+    page.style.gridTemplateColumns = "repeat(" + cols + ", " + cellW.toFixed(2) + "mm)";
+    page.style.gridTemplateRows = "repeat(" + rows + ", " + cellH.toFixed(2) + "mm)";
+    page.style.setProperty("--img-max-h", imgMaxH);
+    for (var j = i; j < Math.min(i + perPage, pool.length); j++) {
+      page.appendChild(pool[j].cloneNode(true));
+    }
+    container.appendChild(page);
+  }
+}
+
+function setProgress(done) {
+  var el = document.getElementById("progress");
+  var btn = document.getElementById("printBtn");
+  if (done >= totalCards) {
+    el.textContent = "";
+    btn.disabled = false;
+    btn.textContent = "Print / Save PDF";
+  } else {
+    el.textContent = "Generating " + done + " / " + totalCards + "…";
+  }
+}
+
+function applyImages(images, imgType) {
+  Object.keys(images).forEach(function(code) {
+    var dataUri = images[code];
+    if (!loadedTypes[code]) loadedTypes[code] = {};
+    loadedTypes[code][imgType] = dataUri;
+
+    document.querySelectorAll("[data-code=\"" + code + "\"]").forEach(function(card) {
+      var imgClass = imgType === "qr" ? ".img-qr" : ".img-barcode";
+      var img = card.querySelector(imgClass);
+      if (img) img.src = dataUri;
+      if (imgType === currentImgType) card.classList.remove("loading");
+    });
+  });
+}
+
+function loadBatch(codes, imgType, onDone) {
+  frappe.call({
+    method: "coupon_system.api.get_card_images",
+    args: { codes: JSON.stringify(codes), img_type: imgType },
+    callback: function(r) {
+      if (r.message) applyImages(r.message, imgType);
+      if (onDone) onDone();
+    },
+    error: function() { if (onDone) onDone(); }
+  });
+}
+
+function loadAllOfType(imgType, onComplete) {
+  var codesToLoad = allCodes.filter(function(c) {
+    return !(loadedTypes[c] && loadedTypes[c][imgType]);
+  });
+  if (!codesToLoad.length) { if (onComplete) onComplete(); return; }
+
+  var done = allCodes.length - codesToLoad.length;
+  setProgress(done);
+
+  function next(i) {
+    if (i >= codesToLoad.length) {
+      buildPages();
+      if (onComplete) onComplete();
+      return;
+    }
+    var batch = codesToLoad.slice(i, i + BATCH);
+    loadBatch(batch, imgType, function() {
+      done += batch.length;
+      setProgress(Math.min(done, totalCards));
+      if (i === 0) buildPages();
+      next(i + BATCH);
+    });
+  }
+  next(0);
+}
+
+function onImgTypeChange(imgType) {
+  currentImgType = imgType;
+  document.body.classList.toggle("show-barcode", imgType === "barcode");
+  var anyMissing = allCodes.some(function(c) {
+    return !(loadedTypes[c] && loadedTypes[c][imgType]);
+  });
+  if (anyMissing) {
+    var btn = document.getElementById("printBtn");
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    allCodes.forEach(function(c) {
+      document.querySelectorAll("[data-code=\"" + c + "\"]").forEach(function(card) {
+        if (!(loadedTypes[c] && loadedTypes[c][imgType])) card.classList.add("loading");
+      });
+    });
+    loadAllOfType(imgType, function() {
+      setProgress(totalCards);
+      buildPages();
+    });
+  }
+}
+
+function toggleField(field, show) {
+  document.body.classList.toggle("hide-" + field, !show);
+}
+
+frappe.ready(function() {
+  setProgress(0);
+  loadAllOfType("qr", function() {
+    setProgress(totalCards);
+    buildPages();
+  });
+});
+</script>
+{% endblock %}
