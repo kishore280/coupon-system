@@ -18,8 +18,8 @@ def _get_balance(phone):
 		.groupby(CL.type)
 		.run(as_dict=True)
 	)
-	totals = {r.type: flt(r.total) for r in rows}
-	return totals.get("CREDIT", 0.0) - totals.get("DEBIT", 0.0)
+	totals = {r.type: cint(r.total) for r in rows}
+	return totals.get("CREDIT", 0) - totals.get("DEBIT", 0)
 
 
 def _get_or_create_user(phone, full_name=None):
