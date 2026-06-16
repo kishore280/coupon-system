@@ -21,51 +21,81 @@ frappe.listview_settings["Coupon Card"] = {
 
 		listview.page.add_inner_button(__("Generate Cards"), () => {
 			const dialog = new frappe.ui.Dialog({
-				title: __("Generate Coupon Cards"),
+				title: __("Bulk Generate Coupon Cards"),
+				size: "large",
 				fields: [
 					{
-						fieldname: "quantity",
-						label: __("Quantity"),
-						fieldtype: "Int",
-						reqd: 1,
-					},
-					{
-						fieldname: "item_code",
-						label: __("Item Code"),
-						fieldtype: "Link",
-						options: "Item",
-						reqd: 1,
-					},
-					{
-						fieldname: "points_value",
-						label: __("Points Value"),
-						fieldtype: "Float",
-						reqd: 1,
-					},
-					{
-						fieldname: "expiry_date",
-						label: __("Expiry Date"),
-						fieldtype: "Date",
-						reqd: 1,
-					},
-					{ fieldtype: "Column Break" },
-					{
-						fieldname: "batch_no",
-						label: __("Batch No"),
-						fieldtype: "Data",
-					},
-					{
-						fieldname: "work_order",
-						label: __("Work Order"),
-						fieldtype: "Data",
+						fieldname: "items",
+						fieldtype: "Table",
+						label: __("Card Batches"),
+						editable_grid: 1,
+						cannot_delete_rows: false,
+						fields: [
+							{
+								fieldname: "naming_series",
+								fieldtype: "Select",
+								label: __("Series"),
+								options: "CC-.YYYY.-.#####",
+								default: "CC-.YYYY.-.#####",
+								in_list_view: 1,
+								columns: 2,
+							},
+							{
+								fieldname: "item_code",
+								fieldtype: "Link",
+								options: "Item",
+								label: __("Item Code"),
+								in_list_view: 1,
+								reqd: 1,
+								columns: 3,
+							},
+							{
+								fieldname: "quantity",
+								fieldtype: "Int",
+								label: __("Qty"),
+								in_list_view: 1,
+								reqd: 1,
+								columns: 1,
+							},
+							{
+								fieldname: "points_value",
+								fieldtype: "Float",
+								label: __("Points"),
+								in_list_view: 1,
+								reqd: 1,
+								columns: 2,
+							},
+							{
+								fieldname: "expiry_date",
+								fieldtype: "Date",
+								label: __("Expiry"),
+								in_list_view: 1,
+								reqd: 1,
+								columns: 2,
+							},
+							{
+								fieldname: "batch_no",
+								fieldtype: "Data",
+								label: __("Batch No"),
+								in_list_view: 1,
+								columns: 2,
+							},
+						],
 					},
 				],
 				primary_action_label: __("Generate"),
 				primary_action(values) {
+					const items = (values.items || []).filter(
+						(r) => r.item_code && r.quantity && r.points_value && r.expiry_date
+					);
+					if (!items.length) {
+						frappe.msgprint(__("Add at least one row with all required fields."));
+						return;
+					}
 					dialog.disable_primary_action();
 					frappe.call({
 						method: "coupon_system.api.generate_cards",
-						args: values,
+						args: { items: JSON.stringify(items) },
 						callback(r) {
 							dialog.enable_primary_action();
 							if (r.message?.success) {
