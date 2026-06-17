@@ -158,7 +158,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None):
 		if amount <= 0:
 			frappe.throw(_("Redemption amount must be greater than 0"))
 
-		if frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "type": "DEBIT"}):
+		if frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "site_url": site_url, "type": "DEBIT"}):
 			frappe.throw(_("Already redeemed for this invoice"))
 
 		if code:
