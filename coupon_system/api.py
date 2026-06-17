@@ -149,7 +149,7 @@ def balance(phone):
 
 
 @frappe.whitelist()
-def redeem(phone, amount, site_url, invoice_no, code=None):
+def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 	try:
 		if not phone or not str(phone).strip():
 			frappe.throw(_("phone is required"))
@@ -181,7 +181,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None):
 
 			frappe.db.savepoint("coupon_redeem")
 			try:
-				_get_or_create_user(phone)
+				_get_or_create_user(phone, full_name)
 
 				card.is_used = 1
 				card.used_by_phone = phone
