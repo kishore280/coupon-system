@@ -10,7 +10,7 @@
   "points",
   "timestamp",
   "column_break_1",
-  "branch",
+  "site_url",
   "invoice_no",
   "description"
  ],
@@ -48,9 +48,9 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "branch",
+   "fieldname": "site_url",
    "fieldtype": "Data",
-   "label": "Branch"
+   "label": "Site URL"
   },
   {
    "fieldname": "invoice_no",

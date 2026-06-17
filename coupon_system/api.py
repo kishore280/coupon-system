@@ -130,7 +130,7 @@ def balance(phone):
 		CL = frappe.qb.DocType("Coupon Ledger")
 		ledger_entries = (
 			frappe.qb.from_(CL)
-			.select(CL.type, CL.points, CL.description, CL.branch, CL.invoice_no, CL.timestamp)
+			.select(CL.type, CL.points, CL.description, CL.site_url, CL.invoice_no, CL.timestamp)
 			.where(CL.phone == phone)
 			.orderby(CL.timestamp, order=Order.desc)
 			.limit(20)
@@ -149,7 +149,7 @@ def balance(phone):
 
 
 @frappe.whitelist()
-def redeem(phone, amount, branch, invoice_no, code=None):
+def redeem(phone, amount, site_url, invoice_no, code=None):
 	try:
 		if not phone or not str(phone).strip():
 			frappe.throw(_("phone is required"))
@@ -192,8 +192,8 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 				credit.phone = phone
 				credit.type = "CREDIT"
 				credit.points = card.points_value
-				credit.description = f"Card {code} redeemed at branch"
-				credit.branch = branch
+				credit.description = f"Card {code} redeemed at site_url"
+				credit.site_url = site_url
 				credit.timestamp = now_datetime()
 				credit.insert(ignore_permissions=True)
 
@@ -201,8 +201,8 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 				debit.phone = phone
 				debit.type = "DEBIT"
 				debit.points = amount
-				debit.description = f"Redeemed at {branch}"
-				debit.branch = branch
+				debit.description = f"Redeemed at {site_url}"
+				debit.site_url = site_url
 				debit.invoice_no = invoice_no
 				debit.timestamp = now_datetime()
 				debit.insert(ignore_permissions=True)
@@ -224,8 +224,8 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 				debit.phone = phone
 				debit.type = "DEBIT"
 				debit.points = amount
-				debit.description = f"Redeemed at {branch}"
-				debit.branch = branch
+				debit.description = f"Redeemed at {site_url}"
+				debit.site_url = site_url
 				debit.invoice_no = invoice_no
 				debit.timestamp = now_datetime()
 				debit.insert(ignore_permissions=True)
@@ -237,6 +237,55 @@ def redeem(phone, amount, branch, invoice_no, code=None):
 			"success": True,
 			"redeemed": amount,
 			"new_balance": _get_balance(phone),
+		}
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def reverse_redeem(invoice_no, site_url):
+	"""
+	Reverse a redemption when its Sales Invoice is cancelled.
+	Creates a CREDIT entry to restore the points; preserves the original DEBIT
+	so the full audit trail is intact.  Idempotent — safe to call more than once.
+	"""
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+
+		debit = frappe.db.get_value(
+			"Coupon Ledger",
+			{"invoice_no": invoice_no, "site_url": site_url, "type": "DEBIT"},
+			["name", "phone", "points"],
+			as_dict=True,
+		)
+		if not debit:
+			frappe.throw(_("No redemption found for this invoice"))
+
+		# Idempotency: CREDIT with invoice_no means a reversal already exists
+		if frappe.db.exists("Coupon Ledger", {
+			"invoice_no": invoice_no,
+			"site_url": site_url,
+			"type": "CREDIT",
+		}):
+			frappe.throw(_("Reversal already processed for this invoice"))
+
+		credit = frappe.new_doc("Coupon Ledger")
+		credit.phone = debit.phone
+		credit.type = "CREDIT"
+		credit.points = debit.points
+		credit.description = f"Reversal for invoice {invoice_no}"
+		credit.site_url = site_url
+		credit.invoice_no = invoice_no
+		credit.timestamp = now_datetime()
+		credit.insert(ignore_permissions=True)
+
+		return {
+			"success": True,
+			"phone": debit.phone,
+			"points_restored": debit.points,
+			"new_balance": _get_balance(debit.phone),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}

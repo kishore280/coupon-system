@@ -4,9 +4,10 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, today
 
-from coupon_system.api import balance, bulk_generate_cards, generate_cards, redeem, scan
+from coupon_system.api import balance, bulk_generate_cards, generate_cards, redeem, reverse_redeem, scan
 
 _ITEM_CODE = None
+_SITE_URL = "https://test.oxifixinframart.com"
 
 
 def get_item_code():
@@ -76,7 +77,7 @@ class TestCouponCard(FrappeTestCase):
 	def test_redeem_phone_sufficient_balance(self):
 		make_card("TEST-AAAA-0004", points_value=500)
 		scan(self.phone, "TEST-AAAA-0004")
-		result = redeem(self.phone, 200, "Branch A", "SINV-TEST-001")
+		result = redeem(self.phone, 200, _SITE_URL, "SINV-TEST-001")
 		self.assertTrue(result["success"])
 		self.assertEqual(result["redeemed"], 200)
 		self.assertEqual(result["new_balance"], 300)
@@ -84,13 +85,13 @@ class TestCouponCard(FrappeTestCase):
 	def test_redeem_phone_insufficient_balance(self):
 		make_card("TEST-AAAA-0005", points_value=100)
 		scan(self.phone, "TEST-AAAA-0005")
-		result = redeem(self.phone, 500, "Branch A", "SINV-TEST-002")
+		result = redeem(self.phone, 500, _SITE_URL, "SINV-TEST-002")
 		self.assertFalse(result["success"])
 		self.assertIn("Insufficient", result["error"])
 
 	def test_redeem_by_code(self):
 		make_card("TEST-AAAA-0006", points_value=300)
-		result = redeem(self.phone, 200, "Branch A", "SINV-TEST-003", code="TEST-AAAA-0006")
+		result = redeem(self.phone, 200, _SITE_URL, "SINV-TEST-003", code="TEST-AAAA-0006")
 		self.assertTrue(result["success"])
 		self.assertEqual(result["redeemed"], 200)
 		self.assertEqual(result["new_balance"], 100)
@@ -98,8 +99,8 @@ class TestCouponCard(FrappeTestCase):
 	def test_redeem_duplicate_invoice(self):
 		make_card("TEST-AAAA-0007", points_value=500)
 		scan(self.phone, "TEST-AAAA-0007")
-		redeem(self.phone, 100, "Branch A", "SINV-TEST-004")
-		result = redeem(self.phone, 100, "Branch A", "SINV-TEST-004")
+		redeem(self.phone, 100, _SITE_URL, "SINV-TEST-004")
+		result = redeem(self.phone, 100, _SITE_URL, "SINV-TEST-004")
 		self.assertFalse(result["success"])
 		self.assertIn("Already redeemed", result["error"])
 
@@ -111,7 +112,7 @@ class TestCouponCard(FrappeTestCase):
 	def test_balance_success(self):
 		make_card("TEST-AAAA-0008", points_value=100)
 		scan(self.phone, "TEST-AAAA-0008", full_name="Balance Tester")
-		redeem(self.phone, 40, "Branch A", "SINV-TEST-005")
+		redeem(self.phone, 40, _SITE_URL, "SINV-TEST-005")
 		result = balance(self.phone)
 		self.assertTrue(result["success"])
 		self.assertEqual(result["phone"], self.phone)
@@ -124,21 +125,44 @@ class TestCouponCard(FrappeTestCase):
 
 	def test_redeem_code_expired_card(self):
 		make_card("TEST-AAAA-0009", points_value=200, days_ahead=-1)
-		result = redeem(self.phone, 100, "Branch A", "SINV-TEST-006", code="TEST-AAAA-0009")
+		result = redeem(self.phone, 100, _SITE_URL, "SINV-TEST-006", code="TEST-AAAA-0009")
 		self.assertFalse(result["success"])
 		self.assertIn("expired", result["error"])
 
 	def test_redeem_code_already_used_card(self):
 		make_card("TEST-AAAA-0010", points_value=200, is_used=1)
-		result = redeem(self.phone, 100, "Branch A", "SINV-TEST-007", code="TEST-AAAA-0010")
+		result = redeem(self.phone, 100, _SITE_URL, "SINV-TEST-007", code="TEST-AAAA-0010")
 		self.assertFalse(result["success"])
 		self.assertIn("already redeemed", result["error"])
 
 	def test_redeem_code_insufficient(self):
 		make_card("TEST-AAAA-0011", points_value=50)
-		result = redeem(self.phone, 200, "Branch A", "SINV-TEST-008", code="TEST-AAAA-0011")
+		result = redeem(self.phone, 200, _SITE_URL, "SINV-TEST-008", code="TEST-AAAA-0011")
 		self.assertFalse(result["success"])
 		self.assertIn("Insufficient", result["error"])
+
+	def test_reverse_redeem_restores_balance(self):
+		make_card("TEST-AAAA-0012", points_value=500)
+		scan(self.phone, "TEST-AAAA-0012")
+		redeem(self.phone, 200, _SITE_URL, "SINV-TEST-009")
+		result = reverse_redeem("SINV-TEST-009", _SITE_URL)
+		self.assertTrue(result["success"])
+		self.assertEqual(result["points_restored"], 200)
+		self.assertEqual(result["new_balance"], 500)
+
+	def test_reverse_redeem_idempotent(self):
+		make_card("TEST-AAAA-0013", points_value=300)
+		scan(self.phone, "TEST-AAAA-0013")
+		redeem(self.phone, 100, _SITE_URL, "SINV-TEST-010")
+		reverse_redeem("SINV-TEST-010", _SITE_URL)
+		result = reverse_redeem("SINV-TEST-010", _SITE_URL)
+		self.assertFalse(result["success"])
+		self.assertIn("already", result["error"].lower())
+
+	def test_reverse_redeem_nonexistent_invoice(self):
+		result = reverse_redeem("SINV-DOES-NOT-EXIST", _SITE_URL)
+		self.assertFalse(result["success"])
+		self.assertIn("redemption found", result["error"].lower())
 
 	def test_generate_cards_count_and_uniqueness(self):
 		result = generate_cards(
@@ -181,7 +205,6 @@ class TestCouponCard(FrappeTestCase):
 		self.assertTrue(result["success"])
 		self.assertEqual(result["count"], 7)
 
-		# All created cards exist in DB
 		created = frappe.db.get_all(
 			"Coupon Card",
 			filters={"expiry_date": expiry, "item_code": get_item_code()},
@@ -191,7 +214,6 @@ class TestCouponCard(FrappeTestCase):
 		)
 		self.assertEqual(len(created), 7)
 
-		# Codes are globally unique
 		codes = [r.code for r in created]
 		self.assertEqual(len(codes), len(set(codes)))
 
