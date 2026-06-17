@@ -19,3 +19,7 @@ class CouponCard(Document):
 		used_by_phone: DF.Data | None
 		scanned_at: DF.Datetime | None
 	# end: auto-generated types
+
+	def before_validate(self):
+		if not self.naming_series:
+			self.naming_series = "CC-.YYYY.-.#####"
