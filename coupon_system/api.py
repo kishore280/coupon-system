@@ -12,6 +12,7 @@ from frappe.utils import cint, flt, getdate, now_datetime, today
 def _get_balance(phone):
 	CL = frappe.qb.DocType("Coupon Ledger")
 	rows = (
+		
 		frappe.qb.from_(CL)
 		.select(CL.type, Sum(CL.points).as_("total"))
 		.where(CL.phone == phone)
