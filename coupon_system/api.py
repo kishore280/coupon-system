@@ -224,7 +224,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				credit.phone = phone
 				credit.type = "CREDIT"
 				credit.points = card.points_value
-				credit.description = f"Card {code} redeemed at {site_url}"
+				credit.description = f"Card {code} redeemed"
 				credit.site_url = site_url
 				credit.timestamp = now_datetime()
 				credit.insert(ignore_permissions=True)
@@ -233,7 +233,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				debit.phone = phone
 				debit.type = "DEBIT"
 				debit.points = amount
-				debit.description = f"Redeemed at {site_url}"
+				debit.description = "Redeemed"
 				debit.site_url = site_url
 				debit.invoice_no = invoice_no
 				debit.timestamp = now_datetime()
@@ -256,7 +256,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				debit.phone = phone
 				debit.type = "DEBIT"
 				debit.points = amount
-				debit.description = f"Redeemed at {site_url}"
+				debit.description = "Redeemed"
 				debit.site_url = site_url
 				debit.invoice_no = invoice_no
 				debit.timestamp = now_datetime()
