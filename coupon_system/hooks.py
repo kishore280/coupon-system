@@ -14,7 +14,7 @@ doctype_list_js = {
 }
 
 fixtures = [
-	{"dt": "Role", "filters": [["role_name", "=", "Coupon Manager"]]},
+	{"dt": "Role", "filters": [["role_name", "in", ["Coupon Manager", "Coupon Mobile"]]]},
 ]
 
 # Apps

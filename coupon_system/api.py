@@ -73,6 +73,10 @@ def _validate_card_row(row):
 @frappe.whitelist()
 def scan(phone, code, full_name=None):
 	try:
+		roles = frappe.get_roles()
+		if not ({"System Manager", "Coupon Manager", "Coupon Mobile"} & set(roles)):
+			frappe.throw(_("Not permitted"))
+
 		if not phone or not str(phone).strip():
 			frappe.throw(_("phone is required"))
 
@@ -123,6 +127,10 @@ def scan(phone, code, full_name=None):
 @frappe.whitelist()
 def balance(phone):
 	try:
+		roles = frappe.get_roles()
+		if not ({"System Manager", "Coupon Manager", "Coupon Mobile"} & set(roles)):
+			frappe.throw(_("Not permitted"))
+
 		if not frappe.db.exists("Coupon User", phone):
 			frappe.throw(_("User not found"))
 
