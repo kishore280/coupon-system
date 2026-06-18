@@ -61,6 +61,10 @@
    "report": 1,
    "share": 1,
    "write": 1
+  },
+  {
+   "role": "Coupon Mobile",
+   "read": 1
   }
  ],
  "sort_field": "modified",

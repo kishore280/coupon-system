@@ -95,6 +95,10 @@
    "role": "Coupon Manager",
    "share": 1,
    "write": 0
+  },
+  {
+   "role": "Coupon Mobile",
+   "read": 1
   }
  ],
  "sort_field": "timestamp",
