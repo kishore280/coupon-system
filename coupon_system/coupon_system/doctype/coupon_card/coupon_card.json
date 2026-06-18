@@ -57,7 +57,8 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Expiry Date",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "section_break_1",
@@ -90,7 +91,8 @@
    "fieldname": "used_by_phone",
    "fieldtype": "Data",
    "label": "Used By Phone",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "scanned_at",

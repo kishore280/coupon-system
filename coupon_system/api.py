@@ -129,6 +129,20 @@ def balance(phone):
 		user = frappe.get_doc("Coupon User", phone)
 
 		CL = frappe.qb.DocType("Coupon Ledger")
+
+		# Single GROUP BY for balance + totals
+		rows = (
+			frappe.qb.from_(CL)
+			.select(CL.type, Sum(CL.points).as_("total"))
+			.where(CL.phone == phone)
+			.groupby(CL.type)
+			.run(as_dict=True)
+		)
+		totals = {r.type: cint(r.total) for r in rows}
+		total_earned = totals.get("CREDIT", 0)
+		total_redeemed = totals.get("DEBIT", 0)
+		points_balance = total_earned - total_redeemed
+
 		ledger_entries = (
 			frappe.qb.from_(CL)
 			.select(CL.type, CL.points, CL.description, CL.site_url, CL.invoice_no, CL.timestamp)
@@ -138,11 +152,28 @@ def balance(phone):
 			.run(as_dict=True)
 		)
 
+		# Points expiring in next 30 days
+		CC = frappe.qb.DocType("Coupon Card")
+		expiry_cutoff = frappe.utils.add_days(today(), 30)
+		expiring = (
+			frappe.qb.from_(CC)
+			.select(Sum(CC.points_value).as_("total"))
+			.where(CC.used_by_phone == phone)
+			.where(CC.is_used == 1)
+			.where(CC.expiry_date <= expiry_cutoff)
+			.where(CC.expiry_date >= today())
+			.run()
+		)
+		points_expiring_soon = cint(expiring[0][0]) if expiring and expiring[0][0] else 0
+
 		return {
 			"success": True,
 			"phone": phone,
 			"full_name": user.full_name,
-			"points_balance": _get_balance(phone),
+			"points_balance": points_balance,
+			"total_earned": total_earned,
+			"total_redeemed": total_redeemed,
+			"points_expiring_soon": points_expiring_soon,
 			"ledger": ledger_entries,
 		}
 	except frappe.ValidationError as e:
