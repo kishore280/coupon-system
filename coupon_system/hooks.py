@@ -95,7 +95,7 @@ fixtures = [
 # ------------
 
 # before_install = "coupon_system.install.before_install"
-# after_install = "coupon_system.install.after_install"
+after_install = "coupon_system.install.after_install"
 
 # Uninstallation
 # ------------
