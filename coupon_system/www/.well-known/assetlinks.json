@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.oxitech.oxifix",
+      "sha256_cert_fingerprints": [
+        "08:F3:9A:0D:09:AA:76:D4:C6:85:84:7D:E1:30:99:2E:B1:92:7C:67:8A:F4:7D:1C:E3:5C:3F:23:E2:41:25:22"
+      ]
+    }
+  }
+]
