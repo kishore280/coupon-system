@@ -1,0 +1,39 @@
+{% extends "templates/web.html" %}
+
+{% block page_content %}
+<style>
+  .scan-fallback {
+    max-width: 400px;
+    margin: 60px auto;
+    text-align: center;
+    font-family: sans-serif;
+    padding: 24px;
+  }
+  .scan-fallback h2 { margin-bottom: 8px; }
+  .scan-fallback p { color: #666; margin-bottom: 32px; }
+  .store-btn {
+    display: inline-block;
+    margin: 8px;
+    padding: 14px 28px;
+    border-radius: 8px;
+    background: #1a1a1a;
+    color: #fff;
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .store-btn:hover { background: #333; color: #fff; }
+</style>
+
+<div class="scan-fallback">
+  <h2>Open in the Oxifix App</h2>
+  <p>Download the app to scan your coupon card and earn points.</p>
+  {% if play_store_url != "#" %}
+  <a class="store-btn" href="{{ play_store_url }}">&#9654; Google Play</a>
+  {% endif %}
+  {% if app_store_url != "#" %}
+  <a class="store-btn" href="{{ app_store_url }}">&#63743; App Store</a>
+  {% endif %}
+  <p style="margin-top:32px; font-size:13px; color:#aaa;">Card code: {{ code }}</p>
+</div>
+{% endblock %}

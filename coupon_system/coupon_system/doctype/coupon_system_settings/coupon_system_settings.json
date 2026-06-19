@@ -4,21 +4,35 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "scan_base_url"
+  "scan_base_url",
+  "play_store_url",
+  "app_store_url"
  ],
  "fields": [
   {
-   "default": "https://coupon.yourcompany.com/scan",
-   "description": "Base URL encoded into each QR code. Format: https://yourdomain.com/scan \u2014 the card code is appended as ?code=PAINT-XXXX-XXXX",
+   "default": "https://oxifixprivateltd.com/s",
+   "description": "Base URL encoded into each QR/barcode. Card code is appended as a path segment: /s/PAINT-XXXX-XXXX",
    "fieldname": "scan_base_url",
    "fieldtype": "Data",
    "label": "QR Scan Base URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "play_store_url",
+   "fieldtype": "Data",
+   "label": "Play Store URL",
+   "description": "Google Play Store link shown on fallback page when app is not installed"
+  },
+  {
+   "fieldname": "app_store_url",
+   "fieldtype": "Data",
+   "label": "App Store URL",
+   "description": "Apple App Store link shown on fallback page when app is not installed"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-06-16 00:00:00.000000",
+ "modified": "2026-06-19 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Coupon System",
  "name": "Coupon System Settings",

@@ -9,7 +9,7 @@ def get_coupon_qr(code):
 	base_url = frappe.db.get_single_value("Coupon System Settings", "scan_base_url")
 	if not base_url:
 		frappe.throw(frappe._("Coupon System Settings: scan_base_url is not configured"))
-	url = f"{base_url}?code={code}"
+	url = f"{base_url.rstrip('/')}/{code}"
 	img = qrcode.make(url)
 	buffer = BytesIO()
 	img.save(buffer, format="PNG")
@@ -24,7 +24,7 @@ def get_coupon_barcode(code):
 	base_url = frappe.db.get_single_value("Coupon System Settings", "scan_base_url")
 	if not base_url:
 		frappe.throw(frappe._("Coupon System Settings: scan_base_url is not configured"))
-	url = f"{base_url}?code={code}"
+	url = f"{base_url.rstrip('/')}/{code}"
 
 	bar = barcode.get("code128", url, writer=ImageWriter())
 	buffer = BytesIO()

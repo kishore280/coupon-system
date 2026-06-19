@@ -17,6 +17,10 @@ fixtures = [
 	{"dt": "Role", "filters": [["role_name", "in", ["Coupon Manager", "Coupon Mobile"]]]},
 ]
 
+website_route_rules = [
+	{"from_route": "/s/<code>", "to_route": "s"},
+]
+
 # Apps
 # ------------------
 
