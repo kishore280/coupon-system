@@ -28,11 +28,15 @@
 <div class="scan-fallback">
   <h2>Open in the Oxifix App</h2>
   <p>Download the app to scan your coupon card and earn points.</p>
-  {% if play_store_url != "#" %}
-  <a class="store-btn" href="{{ play_store_url }}">&#9654; Google Play</a>
-  {% endif %}
-  {% if app_store_url != "#" %}
-  <a class="store-btn" href="{{ app_store_url }}">&#63743; App Store</a>
+  {% if play_store_url != "#" or app_store_url != "#" %}
+    {% if play_store_url != "#" %}
+    <a class="store-btn" href="{{ play_store_url }}">&#9654; Google Play</a>
+    {% endif %}
+    {% if app_store_url != "#" %}
+    <a class="store-btn" href="{{ app_store_url }}">&#63743; App Store</a>
+    {% endif %}
+  {% else %}
+  <p style="color:#888; font-size:14px;">The app is coming soon. Visit your nearest Oxifix branch to redeem your points.</p>
   {% endif %}
   <p style="margin-top:32px; font-size:13px; color:#aaa;">Card code: {{ code }}</p>
 </div>
