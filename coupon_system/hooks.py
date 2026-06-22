@@ -100,6 +100,14 @@ website_route_rules = [
 
 # before_install = "coupon_system.install.before_install"
 after_install = "coupon_system.install.after_install"
+after_migrate = "coupon_system.install.after_migrate"
+
+doc_events = {
+	"Stock Entry": {
+		"on_submit": "coupon_system.coupon_auto.generate_on_manufacture",
+		"on_cancel": "coupon_system.coupon_auto.notify_on_manufacture_cancel",
+	},
+}
 
 # Uninstallation
 # ------------

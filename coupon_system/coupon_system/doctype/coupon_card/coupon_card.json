@@ -13,6 +13,7 @@
   "section_break_1",
   "batch_no",
   "work_order",
+  "source_stock_entry",
   "section_break_2",
   "is_used",
   "used_by_phone",
@@ -74,6 +75,14 @@
    "fieldname": "work_order",
    "fieldtype": "Data",
    "label": "Work Order"
+  },
+  {
+   "fieldname": "source_stock_entry",
+   "fieldtype": "Data",
+   "label": "Source Stock Entry",
+   "read_only": 1,
+   "search_index": 1,
+   "description": "Manufacture Stock Entry that auto-generated this card (used to prevent duplicates)"
   },
   {
    "fieldname": "section_break_2",

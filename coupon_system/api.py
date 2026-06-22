@@ -469,19 +469,19 @@ def _unique_codes(quantity, seen=None):
 
 
 def _generate_batch(quantity, item_code, points_value, expiry_date,
-					naming_series, batch_no, work_order):
+					naming_series, batch_no, work_order, source_stock_entry=""):
 	codes = _unique_codes(quantity)
 
 	now = now_datetime()
 	user = frappe.session.user
 	fields = [
 		"name", "naming_series", "code", "item_code", "points_value",
-		"expiry_date", "batch_no", "work_order", "is_used", "docstatus",
-		"creation", "modified", "owner", "modified_by",
+		"expiry_date", "batch_no", "work_order", "source_stock_entry",
+		"is_used", "docstatus", "creation", "modified", "owner", "modified_by",
 	]
 	values = [
 		[make_autoname(naming_series), naming_series, code, item_code, points_value,
-		 expiry_date, batch_no, work_order, 0, 0, now, now, user, user]
+		 expiry_date, batch_no, work_order, source_stock_entry, 0, 0, now, now, user, user]
 		for code in codes
 	]
 	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)
