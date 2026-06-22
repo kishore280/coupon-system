@@ -26,13 +26,15 @@ function render_codes(frm) {
 				callback(r2) {
 					const bar = r2.message && r2.message[frm.doc.code];
 					wrapper.html(`
-						<div style="display:flex; gap:32px; align-items:center; flex-wrap:wrap; padding:8px 0;">
+						<div style="display:flex; flex-direction:column; gap:16px; align-items:center;
+									padding:16px; border:1px solid var(--border-color, #e0e0e0);
+									border-radius:8px; background:var(--card-bg, #fff);">
 							${qr ? `<div style="text-align:center;">
-								<img src="${qr}" style="width:160px;height:160px;"/>
-								<div class="text-muted" style="font-size:11px;margin-top:4px;">Scan (QR)</div>
+								<img src="${qr}" style="width:170px;height:170px;"/>
+								<div class="text-muted" style="font-size:11px;margin-top:4px;">Scan to open app (QR)</div>
 							</div>` : ""}
 							${bar ? `<div style="text-align:center;">
-								<img src="${bar}" style="height:60px;"/>
+								<img src="${bar}" style="width:100%;max-width:220px;height:55px;object-fit:contain;"/>
 								<div class="text-muted" style="font-size:11px;margin-top:4px;">${frappe.utils.escape_html(frm.doc.code)}</div>
 							</div>` : ""}
 						</div>`);

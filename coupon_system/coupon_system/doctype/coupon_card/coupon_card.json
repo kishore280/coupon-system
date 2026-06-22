@@ -7,10 +7,11 @@
  "field_order": [
   "naming_series",
   "code",
-  "qr_preview",
   "item_code",
   "points_value",
   "expiry_date",
+  "column_break_qr",
+  "qr_preview",
   "section_break_1",
   "batch_no",
   "work_order",
@@ -38,6 +39,10 @@
    "label": "Code",
    "reqd": 1,
    "unique": 1
+  },
+  {
+   "fieldname": "column_break_qr",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "qr_preview",
