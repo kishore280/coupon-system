@@ -1,11 +1,31 @@
 frappe.ui.form.on("Coupon Card", {
 	refresh(frm) {
 		render_codes(frm);
+
+		if (!frm.is_new() && frm.doc.code) {
+			frm.add_custom_button(
+				__("This Card"),
+				() => open_print_page([["Coupon Card", "code", "=", frm.doc.code]]),
+				__("Print"),
+			);
+		}
+		if (!frm.is_new() && frm.doc.item_code) {
+			frm.add_custom_button(
+				__("All Cards for this Item"),
+				() => open_print_page([["Coupon Card", "item_code", "=", frm.doc.item_code]]),
+				__("Print"),
+			);
+		}
 	},
 	code(frm) {
 		render_codes(frm);
 	},
 });
+
+function open_print_page(filters) {
+	const url = "/print_cards?filters=" + encodeURIComponent(JSON.stringify(filters));
+	window.open(url, "_blank");
+}
 
 function render_codes(frm) {
 	const wrapper = frm.get_field("qr_preview").$wrapper;
