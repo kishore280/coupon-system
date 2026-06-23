@@ -34,7 +34,7 @@ another against one shared balance.
 
 | DocType | Purpose | Notes |
 |---|---|---|
-| **Coupon Campaign** | The dynamic-value dial | `points` resolved live at scan; `audience` (Customer Group), `validity_months`, `is_active` |
+| **Coupon Campaign** | The dynamic-value dial | `points` resolved live at scan; `audience` (Customer Group), `validity_months`, `is_active`, `end_date` |
 | **Coupon User** | One per customer phone | `phone` is the document name; `points_balance` is virtual (never stored) |
 | **Coupon Card** | One physical card | `code` + `campaign` + `status` (lifecycle) + `item_code` (trace); `points_value` is a snapshot fallback only |
 | **Coupon Ledger** | Immutable point movements | `type` = CREDIT / DEBIT; balance = SUM(CREDIT) − SUM(DEBIT) |
@@ -45,9 +45,26 @@ another against one shared balance.
 points and every unscanned card of that campaign is instantly worth the new value; points
 already earned stay frozen. **Balance is always derived** from the ledger SUM at runtime.
 
-**Card lifecycle:** `Generated → Active → Redeemed → Expired/Void`. Cards are generated
-`Active`; a daily job expires unused cards past their date; Work Order cancel voids unused
-cards. See `coupon-system-design-v2.md` for the full architecture.
+**Card lifecycle — `status` field (the single source of truth; desk + API both read it):**
+
+| Status | Meaning | Set when |
+|---|---|---|
+| **Generated** | Minted, not yet live (reserved for a future pre-printed/import flow) | — |
+| **Active** | Live & scannable | on generation |
+| **Redeemed** | Scanned, points banked, single-use done | `scan` / `redeem` |
+| **Expired** | The card's **own** `expiry_date` passed | daily `expire_cards` sweep |
+| **Retired** | The **campaign ended** (`end_date` passed) — kills all its cards at once | sweep, or instant on setting a past `end_date` |
+| **Void** | The **Work Order was cancelled** | `void_on_work_order_cancel` |
+
+The three dead states are distinct so support knows *why* a card failed; `scan` returns the
+matching message (`"Card expired"`, `"This campaign has ended"`, `"Card has been voided"`).
+
+**Controls (all server-side — the mobile API is gated too, not just the desk):**
+- `Coupon Campaign.is_active` — temporary pause; cards can't be scanned, reversible
+- `Coupon Campaign.end_date` — permanent retirement; propagates to card `status = Retired`
+- `Item.custom_coupon_enabled` — pause auto-generation for an item without losing its campaign
+
+See `coupon-system-design-v2.md` for the full architecture.
 
 ---
 
@@ -64,7 +81,12 @@ or `Coupon Mobile` (enforced per-endpoint).
 | `reverse_redeem(invoice_no, site_url)` | POST | Reverses a redemption when an invoice is cancelled |
 | `generate_cards(quantity, campaign, item_code=, work_order=, batch_no=)` | POST | Bulk-create cards for a campaign (points/expiry snapshotted from it) |
 | `bulk_generate_cards(items)` | POST | Multi-batch generation; each row `{quantity, campaign, ...}` |
+| `campaign_card_counts(campaign)` | GET | Lifecycle counts for the campaign form dashboard |
 | `get_card_images(codes, img_type)` | POST | Returns QR/barcode images for printing |
+
+**Desk extras:** the Coupon Campaign form has a **Generate Cards** button + a live lifecycle
+dashboard; the Coupon Card form shows a QR/barcode preview + Print buttons. Reporting via the
+**Coupon Card Traceability** report (counts by campaign × item × status).
 
 ### Auto-generation (Work Order, Option B — print-at-line)
 
