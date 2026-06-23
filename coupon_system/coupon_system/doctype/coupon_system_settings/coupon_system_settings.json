@@ -4,12 +4,18 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "architecture_help",
   "scan_base_url",
   "code_prefix",
   "play_store_url",
   "app_store_url"
  ],
  "fields": [
+  {
+   "fieldname": "architecture_help",
+   "fieldtype": "HTML",
+   "label": "How it works"
+  },
   {
    "default": "https://oxifixprivateltd.com/s",
    "description": "Base URL encoded into each QR/barcode. Card code is appended as a path segment: /s/<code>",
