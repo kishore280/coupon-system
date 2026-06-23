@@ -12,6 +12,7 @@
   "column_break_1",
   "points",
   "validity_months",
+  "end_date",
   "section_break_desc",
   "description"
  ],
@@ -59,6 +60,12 @@
    "fieldtype": "Int",
    "label": "Validity (Months)",
    "description": "Card shelf life: months from generation until an unscanned card expires."
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "Campaign End Date",
+   "description": "Optional. On this date the whole campaign retires: every unused card under it becomes Expired and can no longer be scanned, regardless of the card's own date."
   },
   {
    "fieldname": "section_break_desc",

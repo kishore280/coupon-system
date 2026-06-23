@@ -40,16 +40,18 @@ def cleanup_user(phone):
 _TEST_CAMPAIGN = "TEST Plumber 50"
 
 
-def ensure_test_campaign(points=50, validity_months=12, is_active=1):
+def ensure_test_campaign(points=50, validity_months=12, is_active=1, end_date=None):
 	if frappe.db.exists("Coupon Campaign", _TEST_CAMPAIGN):
 		frappe.db.set_value("Coupon Campaign", _TEST_CAMPAIGN,
-							{"points": points, "validity_months": validity_months, "is_active": is_active})
+							{"points": points, "validity_months": validity_months,
+							 "is_active": is_active, "end_date": end_date})
 	else:
 		doc = frappe.new_doc("Coupon Campaign")
 		doc.campaign_name = _TEST_CAMPAIGN
 		doc.points = points
 		doc.validity_months = validity_months
 		doc.is_active = is_active
+		doc.end_date = end_date
 		doc.insert(ignore_permissions=True)
 	return _TEST_CAMPAIGN
 
@@ -119,6 +121,29 @@ class TestCouponCard(FrappeTestCase):
 		result = scan(self.phone, "TEST-DYN-0005")
 		self.assertFalse(result["success"])
 		self.assertIn("voided", result["error"])
+
+	def test_scan_ended_campaign_rejected(self):
+		ensure_test_campaign(points=50, end_date=add_days(today(), -1))
+		make_card("TEST-DYN-0006", campaign=self.campaign)
+		result = scan(self.phone, "TEST-DYN-0006")
+		self.assertFalse(result["success"])
+		self.assertIn("ended", result["error"])
+		ensure_test_campaign(points=50, end_date=None)  # restore
+
+	def test_setting_past_end_date_retires_cards(self):
+		ensure_test_campaign(points=50, end_date=None)
+		make_card("TEST-DYN-0007", campaign=self.campaign, status="Active")
+		# set a past end date via the doc so on_update propagation fires
+		camp = frappe.get_doc("Coupon Campaign", self.campaign)
+		camp.end_date = add_days(today(), -1)
+		camp.save(ignore_permissions=True)
+		self.assertEqual(
+			frappe.db.get_value("Coupon Card", {"code": "TEST-DYN-0007"}, "status"),
+			"Expired",
+		)
+		# restore (and the card stays Expired — that's correct, it's retired)
+		camp.end_date = None
+		camp.save(ignore_permissions=True)
 
 	def test_scan_already_used_card(self):
 		make_card("TEST-AAAA-0002", is_used=1)

@@ -166,3 +166,13 @@ class TestCouponAutoWorkOrder(FrappeTestCase):
 		expire_cards()
 		statuses = {c["status"] for c in _cards_for(name)}
 		self.assertEqual(statuses, {"Expired"})
+
+	def test_sweep_retires_ended_campaign_cards(self):
+		name = _WO_PREFIX + "0010"
+		generate_on_work_order(self._wo(name, 3))  # cards far-future expiry, Active
+		# end the campaign in the past, but bypass on_update so the SWEEP does the work
+		frappe.db.set_value("Coupon Campaign", _CAMPAIGN, "end_date", add_days(today(), -1))
+		expire_cards()
+		statuses = {c["status"] for c in _cards_for(name)}
+		self.assertEqual(statuses, {"Expired"})
+		frappe.db.set_value("Coupon Campaign", _CAMPAIGN, "end_date", None)  # restore

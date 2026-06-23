@@ -94,18 +94,33 @@ def generate_on_work_order(doc, method=None):
 
 
 def expire_cards():
-	"""Daily sweep: move Active cards past their expiry date to Expired.
-	Redeemed/Void cards are untouched — only live stock expires.
+	"""Daily sweep: retire unused cards that are past their own expiry date, OR
+	whose campaign has reached its end_date. Redeemed/Void cards are untouched.
 	"""
 	from frappe.utils import today
 
+	t = today()
+
+	# 1. Cards past their own expiry date
 	frappe.db.sql(
 		"""
 		UPDATE `tabCoupon Card`
 		SET status = 'Expired'
-		WHERE status = 'Active' AND is_used = 0 AND expiry_date < %s
+		WHERE status IN ('Active', 'Generated') AND is_used = 0 AND expiry_date < %s
 		""",
-		today(),
+		t,
+	)
+
+	# 2. Cards whose campaign has ended (retires the whole campaign at once)
+	frappe.db.sql(
+		"""
+		UPDATE `tabCoupon Card` cc
+		JOIN `tabCoupon Campaign` camp ON camp.name = cc.campaign
+		SET cc.status = 'Expired'
+		WHERE cc.status IN ('Active', 'Generated') AND cc.is_used = 0
+		  AND camp.end_date IS NOT NULL AND camp.end_date < %s
+		""",
+		t,
 	)
 
 

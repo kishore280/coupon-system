@@ -41,11 +41,13 @@ def _resolve_card_points(card):
 	"""
 	if card.get("campaign"):
 		camp = frappe.db.get_value(
-			"Coupon Campaign", card.campaign, ["points", "is_active"], as_dict=True
+			"Coupon Campaign", card.campaign, ["points", "is_active", "end_date"], as_dict=True
 		)
 		if camp:
 			if not camp.is_active:
 				frappe.throw(_("This campaign is not active"))
+			if camp.end_date and getdate(camp.end_date) < getdate(today()):
+				frappe.throw(_("This campaign has ended"))
 			return cint(camp.points)
 	return cint(card.get("points_value"))
 
@@ -72,12 +74,15 @@ def _generate_code():
 def _campaign_snapshot(campaign):
 	"""Look up a campaign → (points_snapshot, expiry_date). Raises if missing/inactive."""
 	camp = frappe.db.get_value(
-		"Coupon Campaign", campaign, ["points", "validity_months", "is_active"], as_dict=True
+		"Coupon Campaign", campaign,
+		["points", "validity_months", "is_active", "end_date"], as_dict=True,
 	)
 	if not camp:
 		frappe.throw(_("Campaign {0} not found").format(campaign))
 	if not camp.is_active:
 		frappe.throw(_("Campaign {0} is not active").format(campaign))
+	if camp.end_date and getdate(camp.end_date) < getdate(today()):
+		frappe.throw(_("Campaign {0} has ended").format(campaign))
 	points = cint(camp.points)
 	if points <= 0:
 		frappe.throw(_("Campaign {0} has no point value set").format(campaign))
