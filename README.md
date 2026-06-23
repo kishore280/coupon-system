@@ -96,6 +96,15 @@ qty × WO qty), stamped with the finished `item_code` + `work_order` for traceab
 for the crew to print and insert during packing. The coupon stays a normal BOM line, so
 inventory valuation is unchanged. See `coupon_auto.py` and **Coupon Card Traceability** report.
 
+> **The coupon item must be a stock item** (`Maintain Stock` checked). ERPNext populates a
+> Work Order's `required_items` from `get_bom_items_as_dict(..., include_non_stock_items=False)`,
+> which filters to `is_stock_item = 1` — so a **non-stock** coupon item would be dropped from
+> `required_items` and the hook would never see it. Generation fires at WO *submit* and does
+> **not** consume stock (consumption happens later at the Manufacture entry), so you only need
+> coupon stock on hand for that Manufacture step — the same way the existing `RM*COU` coupons
+> already work today. _(If zero-inventory coupons are ever needed, the hook would have to read
+> the BOM directly with `include_non_stock_items=True` — intentionally not built.)_
+
 ---
 
 ## QR Codes, Barcodes & Mobile Deep Links
