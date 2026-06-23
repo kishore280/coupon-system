@@ -364,6 +364,35 @@ def reverse_redeem(invoice_no, site_url):
 
 
 @frappe.whitelist()
+def campaign_card_counts(campaign):
+	"""Lifecycle counts for a campaign, for the Coupon Campaign form dashboard."""
+	roles = frappe.get_roles()
+	if "System Manager" not in roles and "Coupon Manager" not in roles:
+		frappe.throw(_("Not permitted"))
+
+	CC = frappe.qb.DocType("Coupon Card")
+	rows = (
+		frappe.qb.from_(CC)
+		.select(CC.status, frappe.qb.functions("COUNT", CC.name).as_("n"))
+		.where(CC.campaign == campaign)
+		.groupby(CC.status)
+		.run(as_dict=True)
+	)
+	counts = {r.status: cint(r.n) for r in rows}
+	active = counts.get("Active", 0)
+	points = cint(frappe.db.get_value("Coupon Campaign", campaign, "points"))
+	return {
+		"total": sum(counts.values()),
+		"generated": counts.get("Generated", 0),
+		"active": active,
+		"redeemed": counts.get("Redeemed", 0),
+		"expired": counts.get("Expired", 0),
+		"void": counts.get("Void", 0),
+		"potential_points": active * points,  # if every Active card were scanned now
+	}
+
+
+@frappe.whitelist()
 def get_card_images(codes, img_type="qr"):
 	import json
 

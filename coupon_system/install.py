@@ -10,6 +10,7 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 # ERPNext version's field layout.
 _OWN_FIELDS = (
 	"custom_coupon_tab",
+	"custom_coupon_enabled",
 	"custom_coupon_campaign",
 )
 
@@ -33,11 +34,20 @@ def _item_custom_fields(anchor):
 				"insert_after": anchor,
 			},
 			{
+				"fieldname": "custom_coupon_enabled",
+				"fieldtype": "Check",
+				"label": "Coupon Generation Enabled",
+				"default": "1",
+				"insert_after": "custom_coupon_tab",
+				"description": "Master switch. Uncheck to pause card generation for this item without losing its campaign mapping.",
+			},
+			{
 				"fieldname": "custom_coupon_campaign",
 				"fieldtype": "Link",
 				"label": "Coupon Campaign",
 				"options": "Coupon Campaign",
-				"insert_after": "custom_coupon_tab",
+				"insert_after": "custom_coupon_enabled",
+				"depends_on": "custom_coupon_enabled",
 				"description": "If set, this item is a coupon component. When a Work Order whose BOM includes this item is submitted, that many cards of this campaign are generated for the finished good.",
 			},
 		]
@@ -97,6 +107,16 @@ def ensure_custom_fields():
 			break
 
 	create_custom_fields(_item_custom_fields(anchor), ignore_validate=True)
+
+	# Existing coupon items predate the enable switch — default them to enabled
+	# (only touches NULLs, never overrides an explicit disable).
+	frappe.db.sql(
+		"""
+		UPDATE `tabItem` SET custom_coupon_enabled = 1
+		WHERE custom_coupon_enabled IS NULL
+		  AND custom_coupon_campaign IS NOT NULL AND custom_coupon_campaign != ''
+		"""
+	)
 
 
 def _create_mobile_user():

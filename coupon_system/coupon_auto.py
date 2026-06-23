@@ -16,9 +16,16 @@ def generate_on_work_order(doc, method=None):
 	from coupon_system.api import _generate_batch, _campaign_snapshot
 
 	for req in (doc.get("required_items") or []):
-		campaign = frappe.db.get_value("Item", req.item_code, "custom_coupon_campaign")
-		if not campaign:
+		item = frappe.db.get_value(
+			"Item", req.item_code,
+			["custom_coupon_campaign", "custom_coupon_enabled"], as_dict=True,
+		)
+		if not item or not item.custom_coupon_campaign:
 			continue
+		# Master switch: NULL (never set) is treated as enabled; only an explicit 0 pauses.
+		if item.custom_coupon_enabled is not None and not cint(item.custom_coupon_enabled):
+			continue
+		campaign = item.custom_coupon_campaign
 
 		# required_qty = (coupon qty per unit in BOM) × WO qty  → one card each
 		qty = int(flt(req.required_qty))

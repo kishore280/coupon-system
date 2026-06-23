@@ -108,6 +108,15 @@ class TestCouponAutoWorkOrder(FrappeTestCase):
 		generate_on_work_order(wo)  # second call must not duplicate
 		self.assertEqual(len(_cards_for(name)), 10)
 
+	def test_disabled_item_generates_nothing(self):
+		frappe.db.set_value("Item", self.coupon_item, "custom_coupon_enabled", 0)
+		frappe.clear_document_cache("Item", self.coupon_item)
+		name = _WO_PREFIX + "0009"
+		generate_on_work_order(self._wo(name, 5))
+		self.assertEqual(len(_cards_for(name)), 0)
+		frappe.db.set_value("Item", self.coupon_item, "custom_coupon_enabled", 1)  # restore
+		frappe.clear_document_cache("Item", self.coupon_item)
+
 	def test_inactive_campaign_generates_nothing(self):
 		ensure_campaign(is_active=0)
 		name = _WO_PREFIX + "0004"
