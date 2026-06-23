@@ -194,19 +194,11 @@ def balance(phone):
 			.run(as_dict=True)
 		)
 
-		# Points expiring in next 30 days
-		CC = frappe.qb.DocType("Coupon Card")
-		expiry_cutoff = frappe.utils.add_days(today(), 30)
-		expiring = (
-			frappe.qb.from_(CC)
-			.select(Sum(CC.points_value).as_("total"))
-			.where(CC.used_by_phone == phone)
-			.where(CC.is_used == 1)
-			.where(CC.expiry_date <= expiry_cutoff)
-			.where(CC.expiry_date >= today())
-			.run()
-		)
-		points_expiring_soon = cint(expiring[0][0]) if expiring and expiring[0][0] else 0
+		# Earned points never expire in the current model (a card's expiry_date only
+		# governs UNSCANNED cards). Until a "points expire N months after earning"
+		# feature exists, the honest value is 0 — kept in the response so the mobile
+		# contract is stable.
+		points_expiring_soon = 0
 
 		return {
 			"success": True,
