@@ -70,7 +70,7 @@ def _generate_code():
 	chars = string.ascii_uppercase + string.digits
 	part1 = "".join(secrets.choice(chars) for _ in range(4))
 	part2 = "".join(secrets.choice(chars) for _ in range(4))
-	return f"PAINT-{part1}-{part2}"
+	return f"{part1}-{part2}"
 
 
 def _campaign_snapshot(campaign):
@@ -497,7 +497,7 @@ def bulk_generate_cards(items):
 
 def _unique_codes(quantity, seen=None):
 	"""
-	Generate `quantity` unique PAINT-XXXX-XXXX codes.
+	Generate `quantity` unique XXXX-XXXX codes.
 
 	Only checks *candidate* codes against the DB — O(quantity) memory regardless
 	of total cards in the table.  `seen` is a mutable set the caller can pass in
@@ -511,7 +511,7 @@ def _unique_codes(quantity, seen=None):
 
 	while len(result) < quantity:
 		# Overshoot by 3× to minimise round-trips; collision rate is negligible
-		# for PAINT-XXXX-XXXX (36^8 ≈ 2.8 trillion combinations).
+		# for XXXX-XXXX (36^8 ≈ 2.8 trillion combinations).
 		candidates = list({_generate_code() for _ in range((quantity - len(result)) * 3)})
 		candidates = [c for c in candidates if c not in seen]
 
