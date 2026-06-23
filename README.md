@@ -148,15 +148,62 @@ Customer scans QR → phone opens {scan_base_url}/<code>
 
 ## Installation
 
+**Requirements:** a Frappe v15 bench **with ERPNext installed** — the app links to ERPNext
+masters (`Item`, `BOM`, `Work Order`, `Customer Group`). Python deps (`qrcode`,
+`python-barcode`) are declared in `pyproject.toml` and pulled automatically by `bench get-app`.
+
 ```bash
 cd $PATH_TO_YOUR_BENCH
 bench get-app $URL_OF_THIS_REPO
-bench --site <hq-site> install-app coupon_system
-bench --site <hq-site> migrate
+bench --site <site> install-app coupon_system
+bench --site <site> migrate
 ```
 
-On install (`after_install`) the app auto-creates the `Coupon Mobile` role and the mobile
-API user, and prints the generated API key/secret to the console.
+On install the app:
+- creates the `Coupon Manager` + `Coupon Mobile` roles
+- creates the mobile API user and **prints its API key/secret to the console** (paste into HQ Integration Settings)
+- seeds 4 default campaigns (Plumber 5/10, Painter 10/20)
+- adds the `custom_coupon_campaign` + `custom_coupon_enabled` fields on Item
+
+Then set `scan_base_url` in **Coupon System Settings** to the HTTPS base your QR links use.
+
+## Quickstart — reproduce the whole flow in 60 seconds
+
+After install, in `bench --site <site> console`:
+
+```python
+from coupon_system.api import generate_cards, scan, balance
+import frappe
+
+# 1. mint 3 cards for an existing campaign (points/expiry come from it)
+res = generate_cards(quantity=3, campaign="Painter 20")
+code = res["codes"][0]
+
+# 2. scan one — value resolves LIVE from the campaign (20), banked in the ledger
+print(scan("+91-9000000000", code, full_name="Test Plumber"))   # points_added: 20
+
+# 3. prove dynamic value: change the dial, scan another → new value, old stays frozen
+frappe.db.set_value("Coupon Campaign", "Painter 20", "points", 25)
+print(scan("+91-9000000000", res["codes"][1]))                  # points_added: 25
+print(balance("+91-9000000000")["points_balance"])              # 45  (20 frozen + 25)
+frappe.db.set_value("Coupon Campaign", "Painter 20", "points", 20)  # restore
+```
+
+For the **Work Order auto-generation** (Option B): create a blank coupon stock Item, set its
+*Coupon Cards → Campaign*, add it to a product's BOM (qty 1), then submit a Work Order for that
+product — cards auto-mint, stamped with the finished item. Watch them in **Coupon Card
+Traceability**.
+
+## Running the tests
+
+The bench-global `before_tests` is unrelated to this app, so skip it:
+
+```bash
+bench --site <site> run-tests --app coupon_system --skip-before-tests --skip-test-records
+```
+
+37 tests cover dynamic value, the full status lifecycle, campaign end/retire, Work Order
+generation + amendment guard, and idempotency.
 
 ---
 
