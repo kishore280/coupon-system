@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.naming import make_autoname
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Sum
-from frappe.utils import cint, flt, getdate, now_datetime, today
+from frappe.utils import add_months, cint, flt, getdate, now_datetime, today
 
 
 def _get_balance(phone):
@@ -33,6 +33,35 @@ def _get_or_create_user(phone, full_name=None):
 	return user
 
 
+def _resolve_card_points(card):
+	"""Resolve the LIVE point value of a card.
+
+	Campaign value if the card is linked to one (the dynamic dial); otherwise the
+	card's snapshot points_value as a fallback. Raises if the campaign is inactive.
+	"""
+	if card.get("campaign"):
+		camp = frappe.db.get_value(
+			"Coupon Campaign", card.campaign, ["points", "is_active"], as_dict=True
+		)
+		if camp:
+			if not camp.is_active:
+				frappe.throw(_("This campaign is not active"))
+			return cint(camp.points)
+	return cint(card.get("points_value"))
+
+
+def _assert_card_scannable(card):
+	"""Raise if a card cannot be earned/redeemed right now (lifecycle + expiry)."""
+	if card.get("status") == "Void":
+		frappe.throw(_("Card has been voided"))
+	if card.get("status") == "Generated":
+		frappe.throw(_("Card is not active yet"))
+	if card.get("status") == "Redeemed" or card.get("is_used"):
+		frappe.throw(_("Card already redeemed"))
+	if card.get("status") == "Expired" or getdate(card.expiry_date) < getdate(today()):
+		frappe.throw(_("Card expired"))
+
+
 def _generate_code():
 	chars = string.ascii_uppercase + string.digits
 	part1 = "".join(secrets.choice(chars) for _ in range(4))
@@ -40,8 +69,25 @@ def _generate_code():
 	return f"PAINT-{part1}-{part2}"
 
 
-def _validate_card_row(row):
-	"""Validate one batch-row dict. Raises frappe.ValidationError on bad input."""
+def _campaign_snapshot(campaign):
+	"""Look up a campaign → (points_snapshot, expiry_date). Raises if missing/inactive."""
+	camp = frappe.db.get_value(
+		"Coupon Campaign", campaign, ["points", "validity_months", "is_active"], as_dict=True
+	)
+	if not camp:
+		frappe.throw(_("Campaign {0} not found").format(campaign))
+	if not camp.is_active:
+		frappe.throw(_("Campaign {0} is not active").format(campaign))
+	points = cint(camp.points)
+	if points <= 0:
+		frappe.throw(_("Campaign {0} has no point value set").format(campaign))
+	expiry = add_months(today(), cint(camp.validity_months) or 12)
+	return points, expiry
+
+
+def _validate_campaign_row(row):
+	"""Validate one generation-row dict (campaign-driven).
+	Returns (qty, points_snapshot, expiry_date). Raises on bad input."""
 	try:
 		qty = int(row["quantity"])
 	except (KeyError, TypeError, ValueError):
@@ -51,23 +97,11 @@ def _validate_card_row(row):
 	if qty > 10_000:
 		frappe.throw(_("quantity cannot exceed 10,000 per call"))
 
-	if not row.get("item_code"):
-		frappe.throw(_("item_code is required"))
+	if not row.get("campaign"):
+		frappe.throw(_("campaign is required"))
 
-	try:
-		pts = cint(row.get("points_value", 0))
-	except (TypeError, ValueError):
-		frappe.throw(_("points_value must be a positive integer"))
-	if pts <= 0:
-		frappe.throw(_("points_value must be a positive integer"))
-
-	expiry = row.get("expiry_date")
-	if not expiry:
-		frappe.throw(_("expiry_date is required"))
-	if getdate(expiry) < getdate(today()):
-		frappe.throw(_("expiry_date must be in the future"))
-
-	return qty, pts, expiry
+	points, expiry = _campaign_snapshot(row["campaign"])
+	return qty, points, expiry
 
 
 @frappe.whitelist()
@@ -88,11 +122,10 @@ def scan(phone, code, full_name=None):
 		frappe.db.sql("SELECT name FROM `tabCoupon Card` WHERE name = %s FOR UPDATE", card_name)
 		card = frappe.get_doc("Coupon Card", card_name)
 
-		if getdate(card.expiry_date) < getdate(today()):
-			frappe.throw(_("Card expired"))
+		_assert_card_scannable(card)
 
-		if card.is_used:
-			frappe.throw(_("Card already redeemed"))
+		# Resolve the LIVE value now, then lock it into the ledger forever.
+		points = _resolve_card_points(card)
 
 		# _get_or_create_user is inside the savepoint so a write failure rolls it back
 		frappe.db.savepoint("coupon_scan")
@@ -100,6 +133,7 @@ def scan(phone, code, full_name=None):
 			_get_or_create_user(phone, full_name)
 
 			card.is_used = 1
+			card.status = "Redeemed"
 			card.used_by_phone = phone
 			card.scanned_at = now_datetime()
 			card.save(ignore_permissions=True)
@@ -107,7 +141,7 @@ def scan(phone, code, full_name=None):
 			ledger = frappe.new_doc("Coupon Ledger")
 			ledger.phone = phone
 			ledger.type = "CREDIT"
-			ledger.points = card.points_value
+			ledger.points = points
 			ledger.description = f"Card {code} scanned"
 			ledger.timestamp = now_datetime()
 			ledger.insert(ignore_permissions=True)
@@ -117,7 +151,7 @@ def scan(phone, code, full_name=None):
 
 		return {
 			"success": True,
-			"points_added": card.points_value,
+			"points_added": points,
 			"new_balance": _get_balance(phone),
 		}
 	except frappe.ValidationError as e:
@@ -210,13 +244,10 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			frappe.db.sql("SELECT name FROM `tabCoupon Card` WHERE name = %s FOR UPDATE", card_name)
 			card = frappe.get_doc("Coupon Card", card_name)
 
-			if getdate(card.expiry_date) < getdate(today()):
-				frappe.throw(_("Card expired"))
+			_assert_card_scannable(card)
 
-			if card.is_used:
-				frappe.throw(_("Card already redeemed"))
-
-			if cint(card.points_value) < amount:
+			points = _resolve_card_points(card)
+			if points < amount:
 				frappe.throw(_("Insufficient balance"))
 
 			frappe.db.savepoint("coupon_redeem")
@@ -224,6 +255,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				_get_or_create_user(phone, full_name)
 
 				card.is_used = 1
+				card.status = "Redeemed"
 				card.used_by_phone = phone
 				card.scanned_at = now_datetime()
 				card.save(ignore_permissions=True)
@@ -231,7 +263,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				credit = frappe.new_doc("Coupon Ledger")
 				credit.phone = phone
 				credit.type = "CREDIT"
-				credit.points = card.points_value
+				credit.points = points
 				credit.description = f"Card {code} redeemed"
 				credit.site_url = site_url
 				credit.timestamp = now_datetime()
@@ -348,25 +380,25 @@ def get_card_images(codes, img_type="qr"):
 
 
 @frappe.whitelist()
-def generate_cards(quantity, item_code, points_value, expiry_date,
-				   naming_series=None, batch_no=None, work_order=None):
-	"""Generate a single batch of coupon cards. Original signature kept for backward compat."""
+def generate_cards(quantity, campaign, item_code=None, naming_series=None,
+				   batch_no=None, work_order=None):
+	"""Generate a single batch of coupon cards for a campaign.
+
+	Points and expiry are derived from the campaign at generation (snapshot);
+	the live point value is still resolved from the campaign at scan time.
+	"""
 	try:
 		roles = frappe.get_roles()
 		if "System Manager" not in roles and "Coupon Manager" not in roles:
 			frappe.throw(_("Not permitted"))
 
-		qty, pts, expiry = _validate_card_row({
-			"quantity": quantity,
-			"item_code": item_code,
-			"points_value": points_value,
-			"expiry_date": expiry_date,
-		})
+		qty, pts, expiry = _validate_campaign_row({"quantity": quantity, "campaign": campaign})
 
 		return _generate_batch(
-			qty, item_code, pts, expiry,
+			qty, item_code or "", pts, expiry,
 			naming_series or "CC-.YYYY.-.#####",
 			batch_no or "", work_order or "",
+			campaign=campaign,
 		)
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
@@ -376,8 +408,7 @@ def generate_cards(quantity, item_code, points_value, expiry_date,
 def bulk_generate_cards(items):
 	"""
 	Generate multiple batches in one call.
-	items: JSON list of {quantity, item_code, points_value, expiry_date,
-	                     naming_series, batch_no, work_order}
+	items: JSON list of {quantity, campaign, item_code, naming_series, batch_no, work_order}
 	"""
 	import json
 
@@ -396,7 +427,7 @@ def bulk_generate_cards(items):
 		validated = []
 		for i, row in enumerate(items, start=1):
 			try:
-				qty, pts, expiry = _validate_card_row(row)
+				qty, pts, expiry = _validate_campaign_row(row)
 			except frappe.ValidationError as e:
 				frappe.throw(_("Row {0}: {1}").format(i, str(e)))
 			validated.append((qty, pts, expiry, row))
@@ -406,9 +437,9 @@ def bulk_generate_cards(items):
 		now = now_datetime()
 		user = frappe.session.user
 		fields = [
-			"name", "naming_series", "code", "item_code", "points_value",
-			"expiry_date", "batch_no", "work_order", "is_used", "docstatus",
-			"creation", "modified", "owner", "modified_by",
+			"name", "naming_series", "code", "campaign", "status", "item_code",
+			"points_value", "expiry_date", "batch_no", "work_order", "is_used",
+			"docstatus", "creation", "modified", "owner", "modified_by",
 		]
 		all_values = []
 
@@ -418,8 +449,8 @@ def bulk_generate_cards(items):
 			for code in codes:
 				all_values.append([
 					make_autoname(series), series, code,
-					row["item_code"], pts, expiry,
-					row.get("batch_no") or "", row.get("work_order") or "",
+					row["campaign"], "Active", row.get("item_code") or "",
+					pts, expiry, row.get("batch_no") or "", row.get("work_order") or "",
 					0, 0, now, now, user, user,
 				])
 
@@ -469,19 +500,21 @@ def _unique_codes(quantity, seen=None):
 
 
 def _generate_batch(quantity, item_code, points_value, expiry_date,
-					naming_series, batch_no, work_order, source_stock_entry=""):
+					naming_series, batch_no, work_order, source_stock_entry="",
+					campaign="", status="Active"):
 	codes = _unique_codes(quantity)
 
 	now = now_datetime()
 	user = frappe.session.user
 	fields = [
-		"name", "naming_series", "code", "item_code", "points_value",
-		"expiry_date", "batch_no", "work_order", "source_stock_entry",
+		"name", "naming_series", "code", "campaign", "status", "item_code",
+		"points_value", "expiry_date", "batch_no", "work_order", "source_stock_entry",
 		"is_used", "docstatus", "creation", "modified", "owner", "modified_by",
 	]
 	values = [
-		[make_autoname(naming_series), naming_series, code, item_code, points_value,
-		 expiry_date, batch_no, work_order, source_stock_entry, 0, 0, now, now, user, user]
+		[make_autoname(naming_series), naming_series, code, campaign, status, item_code,
+		 points_value, expiry_date, batch_no, work_order, source_stock_entry,
+		 0, 0, now, now, user, user]
 		for code in codes
 	]
 	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)

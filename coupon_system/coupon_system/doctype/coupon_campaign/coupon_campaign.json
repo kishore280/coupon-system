@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:campaign_name",
+ "creation": "2026-06-23 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "campaign_name",
+  "audience",
+  "is_active",
+  "column_break_1",
+  "points",
+  "validity_months",
+  "section_break_desc",
+  "description"
+ ],
+ "fields": [
+  {
+   "fieldname": "campaign_name",
+   "fieldtype": "Data",
+   "label": "Campaign Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "e.g. Plumber 10, Painter 20"
+  },
+  {
+   "fieldname": "audience",
+   "fieldtype": "Link",
+   "label": "Audience",
+   "options": "Customer Group",
+   "in_list_view": 1,
+   "description": "Who the coupon targets (Plumber, Painter, ...). Label only for now — does not gate redemption yet."
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Is Active",
+   "in_list_view": 1,
+   "description": "When unchecked, cards of this campaign cannot be scanned."
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "points",
+   "fieldtype": "Int",
+   "label": "Points",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "The live point value. Change anytime — applies to every unscanned card of this campaign. Already-earned points stay locked."
+  },
+  {
+   "default": "12",
+   "fieldname": "validity_months",
+   "fieldtype": "Int",
+   "label": "Validity (Months)",
+   "description": "Card shelf life: months from generation until an unscanned card expires."
+  },
+  {
+   "fieldname": "section_break_desc",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  }
+ ],
+ "links": [
+  {
+   "link_doctype": "Coupon Card",
+   "link_fieldname": "campaign"
+  }
+ ],
+ "modified": "2026-06-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Coupon System",
+ "name": "Coupon Campaign",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Coupon Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "role": "Coupon Mobile",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

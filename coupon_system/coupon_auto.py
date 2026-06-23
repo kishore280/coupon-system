@@ -1,79 +1,88 @@
 import frappe
 from frappe import _
-from frappe.utils import add_months, cint, flt, today
+from frappe.utils import cint, flt
 
 
-def generate_on_manufacture(doc, method=None):
-	"""On submit of a Manufacture Stock Entry, auto-generate coupon cards for any
-	finished-goods item flagged with `custom_generate_coupons`.
+def generate_on_work_order(doc, method=None):
+	"""Option B (print-at-line): when a Work Order is submitted, generate uniquely
+	coded cards for any coupon component in its BOM, so the crew can print + insert
+	them during packing.
 
-	One card per produced unit (× cards_per_unit). Only Nos-UOM saleable items
-	qualify — bulk Litre intermediates (RM bases) are excluded by design.
+	A "coupon component" is any required item whose Item.custom_coupon_campaign is
+	set. Cards-per-unit = the BOM line qty (already folded into required_qty).
+	Cards are stamped with the finished good (production_item) for traceability.
+	Idempotent on work_order + campaign.
 	"""
-	if doc.purpose != "Manufacture":
-		return
+	from coupon_system.api import _generate_batch, _campaign_snapshot
 
-	# Aggregate finished qty per item (a single entry may split a finished good
-	# across multiple rows). Capture the first batch_no seen per item.
-	produced = {}
-	batch_of = {}
-	for row in doc.items:
-		if not row.is_finished_item:
-			continue
-		produced[row.item_code] = produced.get(row.item_code, 0) + flt(row.qty)
-		if row.get("batch_no") and row.item_code not in batch_of:
-			batch_of[row.item_code] = row.batch_no
-
-	if not produced:
-		return
-
-	from coupon_system.api import _generate_batch
-
-	for item_code, total_qty in produced.items():
-		# Idempotency: never double-generate for the same source entry + item
-		if frappe.db.exists(
-			"Coupon Card", {"source_stock_entry": doc.name, "item_code": item_code}
-		):
+	for req in (doc.get("required_items") or []):
+		campaign = frappe.db.get_value("Item", req.item_code, "custom_coupon_campaign")
+		if not campaign:
 			continue
 
-		item = frappe.get_cached_doc("Item", item_code)
-		if not item.get("custom_generate_coupons"):
-			continue
-		# Safety filter: only saleable Nos units get cards, never bulk bases
-		if (item.stock_uom or "").strip().lower() != "nos":
-			continue
-
-		cards_per_unit = cint(item.get("custom_cards_per_unit")) or 1
-		qty = int(flt(total_qty)) * cards_per_unit
+		# required_qty = (coupon qty per unit in BOM) × WO qty  → one card each
+		qty = int(flt(req.required_qty))
 		if qty <= 0:
 			continue
 
-		points = cint(item.get("custom_coupon_points"))
-		months = cint(item.get("custom_coupon_validity_months")) or 12
-		expiry = add_months(today(), months)
+		# Idempotency: never double-generate for the same WO + campaign
+		if frappe.db.exists(
+			"Coupon Card", {"work_order": doc.name, "campaign": campaign}
+		):
+			continue
+
+		try:
+			points, expiry = _campaign_snapshot(campaign)
+		except frappe.ValidationError:
+			# Inactive/misconfigured campaign — skip silently, surface a comment
+			frappe.msgprint(
+				_("Coupon campaign {0} is inactive or misconfigured — no cards generated for {1}").format(
+					campaign, req.item_code
+				),
+				indicator="orange", alert=True,
+			)
+			continue
 
 		_generate_batch(
-			qty, item_code, points, expiry, "CC-.YYYY.-.#####",
-			batch_of.get(item_code, ""), doc.get("work_order") or "",
-			source_stock_entry=doc.name,
+			qty, doc.production_item or "", points, expiry, "CC-.YYYY.-.#####",
+			"", doc.name, campaign=campaign, status="Active",
 		)
 		frappe.msgprint(
-			_("Generated {0} coupon card(s) for {1}").format(qty, item_code),
+			_("Generated {0} '{1}' coupon card(s) — ready to print").format(qty, campaign),
 			indicator="green", alert=True,
 		)
 
 
-def notify_on_manufacture_cancel(doc, method=None):
-	"""On cancel of a Manufacture Stock Entry, do NOT auto-delete cards (they may
-	already be printed and inserted into physical boxes). Just flag for review.
+def expire_cards():
+	"""Daily sweep: move Active cards past their expiry date to Expired.
+	Redeemed/Void cards are untouched — only live stock expires.
 	"""
-	if doc.purpose != "Manufacture":
-		return
+	from frappe.utils import today
 
-	count = frappe.db.count("Coupon Card", {"source_stock_entry": doc.name})
-	if count:
+	frappe.db.sql(
+		"""
+		UPDATE `tabCoupon Card`
+		SET status = 'Expired'
+		WHERE status = 'Active' AND is_used = 0 AND expiry_date < %s
+		""",
+		today(),
+	)
+
+
+def void_on_work_order_cancel(doc, method=None):
+	"""On Work Order cancel, void its generated cards (they were never printed/used).
+	Already-redeemed cards are left intact — voiding only affects unused stock.
+	"""
+	cards = frappe.get_all(
+		"Coupon Card",
+		filters={"work_order": doc.name, "status": ["in", ["Active", "Generated"]], "is_used": 0},
+		pluck="name",
+	)
+	for name in cards:
+		frappe.db.set_value("Coupon Card", name, "status", "Void", update_modified=False)
+
+	if cards:
 		frappe.msgprint(
-			_("{0} coupon card(s) were generated for this entry. They were NOT "
-			  "deleted — review and void manually if these boxes were not produced.").format(count),
+			_("{0} unused coupon card(s) for this Work Order were voided.").format(len(cards)),
 			indicator="orange", alert=True,
 		)

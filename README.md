@@ -34,13 +34,20 @@ another against one shared balance.
 
 | DocType | Purpose | Notes |
 |---|---|---|
+| **Coupon Campaign** | The dynamic-value dial | `points` resolved live at scan; `audience` (Customer Group), `validity_months`, `is_active` |
 | **Coupon User** | One per customer phone | `phone` is the document name; `points_balance` is virtual (never stored) |
-| **Coupon Card** | One physical card | Holds `code` (QR value), `points_value`, `expiry_date`, `is_used` |
+| **Coupon Card** | One physical card | `code` + `campaign` + `status` (lifecycle) + `item_code` (trace); `points_value` is a snapshot fallback only |
 | **Coupon Ledger** | Immutable point movements | `type` = CREDIT / DEBIT; balance = SUM(CREDIT) − SUM(DEBIT) |
 | **Coupon System Settings** | Single config | `scan_base_url`, `play_store_url`, `app_store_url` |
 
-**Balance is always derived** from the ledger SUM at runtime — it is never stored, so it
-can never drift out of sync.
+**Dynamic value:** a card stores no fixed worth — it points to a **Coupon Campaign**, whose
+`points` are resolved **live at scan time** and locked into the ledger. Change a campaign's
+points and every unscanned card of that campaign is instantly worth the new value; points
+already earned stay frozen. **Balance is always derived** from the ledger SUM at runtime.
+
+**Card lifecycle:** `Generated → Active → Redeemed → Expired/Void`. Cards are generated
+`Active`; a daily job expires unused cards past their date; Work Order cancel voids unused
+cards. See `coupon-system-design-v2.md` for the full architecture.
 
 ---
 
@@ -55,8 +62,17 @@ or `Coupon Mobile` (enforced per-endpoint).
 | `balance(phone)` | GET | Returns balance, total earned/redeemed, points expiring soon, last 20 ledger rows |
 | `redeem(phone, amount, site_url, invoice_no, code=)` | POST | Branch deducts points against an invoice (idempotent per invoice) |
 | `reverse_redeem(invoice_no, site_url)` | POST | Reverses a redemption when an invoice is cancelled |
-| `generate_cards(...)` / `bulk_generate_cards(items)` | POST | Admin bulk-creates cards with unique codes |
+| `generate_cards(quantity, campaign, item_code=, work_order=, batch_no=)` | POST | Bulk-create cards for a campaign (points/expiry snapshotted from it) |
+| `bulk_generate_cards(items)` | POST | Multi-batch generation; each row `{quantity, campaign, ...}` |
 | `get_card_images(codes, img_type)` | POST | Returns QR/barcode images for printing |
+
+### Auto-generation (Work Order, Option B — print-at-line)
+
+Tag a coupon stock Item with **`custom_coupon_campaign`**. When a Work Order whose BOM
+includes that item is submitted, cards are generated for the finished good (qty = BOM line
+qty × WO qty), stamped with the finished `item_code` + `work_order` for traceability, ready
+for the crew to print and insert during packing. The coupon stays a normal BOM line, so
+inventory valuation is unchanged. See `coupon_auto.py` and **Coupon Card Traceability** report.
 
 ---
 

@@ -10,6 +10,12 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 # ERPNext version's field layout.
 _OWN_FIELDS = (
 	"custom_coupon_tab",
+	"custom_coupon_campaign",
+)
+
+# v1 flag-based fields, superseded by the campaign link — removed on migrate.
+_LEGACY_ITEM_FIELDS = (
+	"custom_coupon_section",
 	"custom_generate_coupons",
 	"custom_coupon_points",
 	"custom_coupon_validity_months",
@@ -27,53 +33,60 @@ def _item_custom_fields(anchor):
 				"insert_after": anchor,
 			},
 			{
-				"fieldname": "custom_generate_coupons",
-				"fieldtype": "Check",
-				"label": "Generate Coupon Cards on Manufacture",
+				"fieldname": "custom_coupon_campaign",
+				"fieldtype": "Link",
+				"label": "Coupon Campaign",
+				"options": "Coupon Campaign",
 				"insert_after": "custom_coupon_tab",
-				"description": "Auto-create cards when this item is produced via a Manufacture Stock Entry (Nos items only).",
-			},
-			{
-				"fieldname": "custom_coupon_points",
-				"fieldtype": "Int",
-				"label": "Coupon Points per Card",
-				"insert_after": "custom_generate_coupons",
-				"depends_on": "custom_generate_coupons",
-				"mandatory_depends_on": "custom_generate_coupons",
-			},
-			{
-				"fieldname": "custom_coupon_validity_months",
-				"fieldtype": "Int",
-				"label": "Coupon Validity (Months)",
-				"default": "12",
-				"insert_after": "custom_coupon_points",
-				"depends_on": "custom_generate_coupons",
-			},
-			{
-				"fieldname": "custom_cards_per_unit",
-				"fieldtype": "Int",
-				"label": "Cards per Unit",
-				"default": "1",
-				"insert_after": "custom_coupon_validity_months",
-				"depends_on": "custom_generate_coupons",
+				"description": "If set, this item is a coupon component. When a Work Order whose BOM includes this item is submitted, that many cards of this campaign are generated for the finished good.",
 			},
 		]
 	}
 
 
+# Default campaigns seeded on install (idempotent). audience is set only when the
+# matching Customer Group already exists — otherwise left blank (it is label-only).
+_DEFAULT_CAMPAIGNS = [
+	{"campaign_name": "Plumber 5", "audience": "Plumber", "points": 5},
+	{"campaign_name": "Plumber 10", "audience": "Plumber", "points": 10},
+	{"campaign_name": "Painter 10", "audience": "Painter", "points": 10},
+	{"campaign_name": "Painter 20", "audience": "Painter", "points": 20},
+]
+
+
 def after_install():
 	ensure_custom_fields()
+	seed_campaigns()
 	_create_mobile_user()
 
 
 def after_migrate():
 	ensure_custom_fields()
+	seed_campaigns()
+
+
+def seed_campaigns():
+	"""Create the default campaigns if missing. Never overwrites existing ones."""
+	for c in _DEFAULT_CAMPAIGNS:
+		if frappe.db.exists("Coupon Campaign", c["campaign_name"]):
+			continue
+		doc = frappe.new_doc("Coupon Campaign")
+		doc.campaign_name = c["campaign_name"]
+		doc.points = c["points"]
+		doc.validity_months = 12
+		doc.is_active = 1
+		if frappe.db.exists("Customer Group", c["audience"]):
+			doc.audience = c["audience"]
+		doc.insert(ignore_permissions=True)
+		print(f"[coupon_system] Seeded campaign: {c['campaign_name']}")
 
 
 def ensure_custom_fields():
-	# Remove the old mid-form section break that absorbed standard Inventory fields.
-	if frappe.db.exists("Custom Field", "Item-custom_coupon_section"):
-		frappe.delete_doc("Custom Field", "Item-custom_coupon_section", ignore_permissions=True)
+	# Drop superseded v1 flag fields (value now lives on the campaign).
+	for fieldname in _LEGACY_ITEM_FIELDS:
+		docname = f"Item-{fieldname}"
+		if frappe.db.exists("Custom Field", docname):
+			frappe.delete_doc("Custom Field", docname, ignore_permissions=True)
 
 	# Anchor the tab at the form's last field, ignoring our own fields so re-runs
 	# don't chain onto themselves.

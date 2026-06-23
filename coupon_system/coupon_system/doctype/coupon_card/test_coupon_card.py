@@ -17,7 +17,7 @@ def get_item_code():
 	return _ITEM_CODE
 
 
-def make_card(code, points_value=100, days_ahead=30, is_used=0):
+def make_card(code, points_value=100, days_ahead=30, is_used=0, campaign=None, status="Active"):
 	frappe.db.delete("Coupon Card", {"code": code})
 	doc = frappe.new_doc("Coupon Card")
 	doc.code = code
@@ -25,6 +25,8 @@ def make_card(code, points_value=100, days_ahead=30, is_used=0):
 	doc.points_value = points_value
 	doc.expiry_date = add_days(today(), days_ahead)
 	doc.is_used = is_used
+	doc.status = "Redeemed" if is_used else status
+	doc.campaign = campaign
 	doc.insert(ignore_permissions=True)
 	return doc
 
@@ -35,12 +37,37 @@ def cleanup_user(phone):
 		frappe.delete_doc("Coupon User", phone, ignore_permissions=True, force=True)
 
 
+_TEST_CAMPAIGN = "TEST Plumber 50"
+
+
+def ensure_test_campaign(points=50, validity_months=12, is_active=1):
+	if frappe.db.exists("Coupon Campaign", _TEST_CAMPAIGN):
+		frappe.db.set_value("Coupon Campaign", _TEST_CAMPAIGN,
+							{"points": points, "validity_months": validity_months, "is_active": is_active})
+	else:
+		doc = frappe.new_doc("Coupon Campaign")
+		doc.campaign_name = _TEST_CAMPAIGN
+		doc.points = points
+		doc.validity_months = validity_months
+		doc.is_active = is_active
+		doc.insert(ignore_permissions=True)
+	return _TEST_CAMPAIGN
+
+
 class TestCouponCard(FrappeTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
 		if not get_item_code():
 			raise unittest.SkipTest("No Items found on this site — skipping coupon tests")
+		cls.campaign = ensure_test_campaign()
+
+	@classmethod
+	def tearDownClass(cls):
+		frappe.db.delete("Coupon Card", {"campaign": _TEST_CAMPAIGN})
+		if frappe.db.exists("Coupon Campaign", _TEST_CAMPAIGN):
+			frappe.delete_doc("Coupon Campaign", _TEST_CAMPAIGN, ignore_permissions=True, force=True)
+		super().tearDownClass()
 
 	def setUp(self):
 		self.phone = "+91-9999000001"
@@ -56,6 +83,42 @@ class TestCouponCard(FrappeTestCase):
 		self.assertTrue(result["success"])
 		self.assertEqual(result["points_added"], 50)
 		self.assertEqual(result["new_balance"], 50)
+
+	def test_scan_resolves_campaign_value_not_snapshot(self):
+		# snapshot says 100, but the campaign says 50 → the LIVE campaign value wins
+		ensure_test_campaign(points=50)
+		make_card("TEST-DYN-0001", points_value=100, campaign=self.campaign)
+		result = scan(self.phone, "TEST-DYN-0001")
+		self.assertTrue(result["success"])
+		self.assertEqual(result["points_added"], 50)
+
+	def test_change_campaign_value_affects_future_only(self):
+		# earn at 50, then the campaign is raised to 75; earned points stay 50
+		ensure_test_campaign(points=50)
+		make_card("TEST-DYN-0002", campaign=self.campaign)
+		first = scan(self.phone, "TEST-DYN-0002")
+		self.assertEqual(first["points_added"], 50)
+
+		ensure_test_campaign(points=75)  # change the dial
+		make_card("TEST-DYN-0003", campaign=self.campaign)
+		second = scan(self.phone, "TEST-DYN-0003")
+		self.assertEqual(second["points_added"], 75)        # new scan gets new value
+		self.assertEqual(second["new_balance"], 125)        # 50 (frozen) + 75
+		ensure_test_campaign(points=50)                      # restore for other tests
+
+	def test_scan_inactive_campaign_rejected(self):
+		ensure_test_campaign(points=50, is_active=0)
+		make_card("TEST-DYN-0004", campaign=self.campaign)
+		result = scan(self.phone, "TEST-DYN-0004")
+		self.assertFalse(result["success"])
+		self.assertIn("not active", result["error"])
+		ensure_test_campaign(points=50, is_active=1)  # restore
+
+	def test_scan_voided_card_rejected(self):
+		make_card("TEST-DYN-0005", status="Void")
+		result = scan(self.phone, "TEST-DYN-0005")
+		self.assertFalse(result["success"])
+		self.assertIn("voided", result["error"])
 
 	def test_scan_already_used_card(self):
 		make_card("TEST-AAAA-0002", is_used=1)
@@ -165,28 +228,20 @@ class TestCouponCard(FrappeTestCase):
 		self.assertIn("redemption found", result["error"].lower())
 
 	def test_generate_cards_count_and_uniqueness(self):
-		result = generate_cards(
-			quantity=5,
-			item_code=get_item_code(),
-			points_value=50,
-			expiry_date=add_days(today(), 365),
-		)
+		result = generate_cards(quantity=5, campaign=self.campaign, item_code=get_item_code())
 		self.assertTrue(result["success"])
 		self.assertEqual(result["count"], 5)
 		self.assertEqual(len(set(result["codes"])), 5)
 		for code in result["codes"]:
-			self.assertTrue(frappe.db.exists("Coupon Card", {"code": code}))
+			doc = frappe.get_doc("Coupon Card", {"code": code})
+			self.assertEqual(doc.campaign, self.campaign)
+			self.assertEqual(doc.status, "Active")
+			self.assertEqual(doc.points_value, 50)  # snapshot from campaign
 		for code in result["codes"]:
 			frappe.db.delete("Coupon Card", {"code": code})
 
 	def test_generate_cards_persists_naming_series(self):
-		result = generate_cards(
-			quantity=2,
-			item_code=get_item_code(),
-			points_value=100,
-			expiry_date=add_days(today(), 365),
-			naming_series="CC-.YYYY.-.#####",
-		)
+		result = generate_cards(quantity=2, campaign=self.campaign, naming_series="CC-.YYYY.-.#####")
 		self.assertTrue(result["success"])
 		for code in result["codes"]:
 			doc = frappe.get_doc("Coupon Card", {"code": code})
@@ -195,52 +250,34 @@ class TestCouponCard(FrappeTestCase):
 		for code in result["codes"]:
 			frappe.db.delete("Coupon Card", {"code": code})
 
+	def test_generate_cards_unknown_campaign_fails(self):
+		result = generate_cards(quantity=2, campaign="NO-SUCH-CAMPAIGN")
+		self.assertFalse(result["success"])
+		self.assertIn("not found", result["error"])
+
 	def test_bulk_generate_cards_multiple_batches(self):
-		expiry = add_days(today(), 365)
 		items = [
-			{"item_code": get_item_code(), "quantity": 3, "points_value": 50, "expiry_date": expiry},
-			{"item_code": get_item_code(), "quantity": 4, "points_value": 100, "expiry_date": expiry},
+			{"campaign": self.campaign, "quantity": 3, "item_code": get_item_code()},
+			{"campaign": self.campaign, "quantity": 4, "item_code": get_item_code()},
 		]
 		result = bulk_generate_cards(items)
 		self.assertTrue(result["success"])
 		self.assertEqual(result["count"], 7)
 
-		created = frappe.db.get_all(
-			"Coupon Card",
-			filters={"expiry_date": expiry, "item_code": get_item_code()},
-			fields=["code", "points_value"],
-			order_by="creation desc",
-			limit=7,
-		)
-		self.assertEqual(len(created), 7)
-
-		codes = [r.code for r in created]
-		self.assertEqual(len(codes), len(set(codes)))
-
-		for r in created:
-			frappe.db.delete("Coupon Card", {"code": r.code})
+		for code in result["codes"]:
+			frappe.db.delete("Coupon Card", {"code": code})
 
 	def test_bulk_generate_cards_no_cross_batch_collisions(self):
 		"""All codes across all batches must be unique — no intra-call duplicates."""
-		expiry = add_days(today(), 365)
 		items = [
-			{"item_code": get_item_code(), "quantity": 10, "points_value": 50, "expiry_date": expiry},
-			{"item_code": get_item_code(), "quantity": 10, "points_value": 75, "expiry_date": expiry},
-			{"item_code": get_item_code(), "quantity": 10, "points_value": 100, "expiry_date": expiry},
+			{"campaign": self.campaign, "quantity": 10},
+			{"campaign": self.campaign, "quantity": 10},
+			{"campaign": self.campaign, "quantity": 10},
 		]
 		result = bulk_generate_cards(items)
 		self.assertTrue(result["success"])
 		self.assertEqual(result["count"], 30)
+		self.assertEqual(len(set(result["codes"])), 30, "Duplicate codes found across batches")
 
-		created = frappe.db.get_all(
-			"Coupon Card",
-			filters={"expiry_date": expiry},
-			fields=["code"],
-			order_by="creation desc",
-			limit=30,
-		)
-		codes = [r.code for r in created]
-		self.assertEqual(len(codes), len(set(codes)), "Duplicate codes found across batches")
-
-		for r in created:
-			frappe.db.delete("Coupon Card", {"code": r.code})
+		for code in result["codes"]:
+			frappe.db.delete("Coupon Card", {"code": code})

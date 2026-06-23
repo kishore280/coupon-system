@@ -7,12 +7,15 @@
  "field_order": [
   "naming_series",
   "code",
-  "item_code",
-  "points_value",
-  "expiry_date",
+  "campaign",
+  "status",
   "column_break_qr",
   "qr_preview",
   "section_break_1",
+  "item_code",
+  "points_value",
+  "expiry_date",
+  "column_break_prod",
   "batch_no",
   "work_order",
   "source_stock_entry",
@@ -41,6 +44,24 @@
    "unique": 1
   },
   {
+   "fieldname": "campaign",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Campaign",
+   "options": "Coupon Campaign",
+   "search_index": 1,
+   "description": "Decides the live point value at scan time."
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Generated\nActive\nRedeemed\nExpired\nVoid",
+   "search_index": 1
+  },
+  {
    "fieldname": "column_break_qr",
    "fieldtype": "Column Break"
   },
@@ -50,19 +71,23 @@
    "label": "QR / Barcode"
   },
   {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break",
+   "label": "Value & Traceability"
+  },
+  {
    "fieldname": "item_code",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
-   "reqd": 1
+   "description": "Product this card was inserted into (traceability)."
   },
   {
    "fieldname": "points_value",
    "fieldtype": "Int",
-   "in_list_view": 1,
-   "label": "Points Value",
-   "reqd": 1
+   "label": "Points Value (snapshot)",
+   "description": "Snapshot of the campaign value at generation. Live value comes from the campaign; this is a fallback only."
   },
   {
    "fieldname": "expiry_date",
@@ -73,9 +98,8 @@
    "search_index": 1
   },
   {
-   "fieldname": "section_break_1",
-   "fieldtype": "Section Break",
-   "label": "Production Info"
+   "fieldname": "column_break_prod",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "batch_no",
@@ -85,7 +109,8 @@
   {
    "fieldname": "work_order",
    "fieldtype": "Data",
-   "label": "Work Order"
+   "label": "Work Order",
+   "search_index": 1
   },
   {
    "fieldname": "source_stock_entry",
@@ -93,7 +118,7 @@
    "label": "Source Stock Entry",
    "read_only": 1,
    "search_index": 1,
-   "description": "Manufacture Stock Entry that auto-generated this card (used to prevent duplicates)"
+   "description": "Production document that generated this card (used to prevent duplicates)"
   },
   {
    "fieldname": "section_break_2",
@@ -122,7 +147,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-16 00:00:00.000000",
+ "modified": "2026-06-23 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Coupon System",
  "name": "Coupon Card",

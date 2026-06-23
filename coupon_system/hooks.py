@@ -103,10 +103,16 @@ after_install = "coupon_system.install.after_install"
 after_migrate = "coupon_system.install.after_migrate"
 
 doc_events = {
-	"Stock Entry": {
-		"on_submit": "coupon_system.coupon_auto.generate_on_manufacture",
-		"on_cancel": "coupon_system.coupon_auto.notify_on_manufacture_cancel",
+	"Work Order": {
+		"on_submit": "coupon_system.coupon_auto.generate_on_work_order",
+		"on_cancel": "coupon_system.coupon_auto.void_on_work_order_cancel",
 	},
+}
+
+scheduler_events = {
+	"daily": [
+		"coupon_system.coupon_auto.expire_cards",
+	],
 }
 
 # Uninstallation
