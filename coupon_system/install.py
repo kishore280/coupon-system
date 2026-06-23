@@ -37,9 +37,9 @@ def _item_custom_fields(anchor):
 				"fieldname": "custom_coupon_enabled",
 				"fieldtype": "Check",
 				"label": "Coupon Generation Enabled",
-				"default": "1",
+				"default": "0",
 				"insert_after": "custom_coupon_tab",
-				"description": "Master switch. Uncheck to pause card generation for this item without losing its campaign mapping.",
+				"description": "Off by default — a normal item is not a coupon. Check this only on a coupon (blank-card) item, then pick its campaign. Uncheck later to pause generation without losing the campaign mapping.",
 			},
 			{
 				"fieldname": "custom_coupon_campaign",
@@ -48,6 +48,7 @@ def _item_custom_fields(anchor):
 				"options": "Coupon Campaign",
 				"insert_after": "custom_coupon_enabled",
 				"depends_on": "custom_coupon_enabled",
+				"mandatory_depends_on": "custom_coupon_enabled",
 				"description": "If set, this item is a coupon component. When a Work Order whose BOM includes this item is submitted, that many cards of this campaign are generated for the finished good.",
 			},
 		]
