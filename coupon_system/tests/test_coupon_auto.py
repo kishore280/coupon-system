@@ -18,9 +18,10 @@ class _FakeWO:
 	"""Minimal stand-in for a Work Order. The handler reads name, production_item,
 	and required_items[].{item_code, required_qty} — a real WO exposes the same."""
 
-	def __init__(self, name, production_item, rows):
+	def __init__(self, name, production_item, rows, amended_from=None):
 		self.name = name
 		self.production_item = production_item
+		self.amended_from = amended_from
 		self.required_items = [frappe._dict(r) for r in rows]
 
 	def get(self, key, default=None):
@@ -98,6 +99,15 @@ class TestCouponAutoWorkOrder(FrappeTestCase):
 		other = frappe.get_all("Item", {"disabled": 0, "custom_coupon_campaign": ["in", [None, ""]]},
 							   pluck="name", limit=1)
 		wo = _FakeWO(name, self.finished_item, [{"item_code": other[0], "required_qty": 50}])
+		generate_on_work_order(wo)
+		self.assertEqual(len(_cards_for(name)), 0)
+
+	def test_amended_work_order_generates_nothing(self):
+		# amendment re-fires on_submit on a new doc; must NOT double-generate
+		name = _WO_PREFIX + "0008"
+		wo = _FakeWO(name, self.finished_item,
+					 [{"item_code": self.coupon_item, "required_qty": 5}],
+					 amended_from=_WO_PREFIX + "0001")
 		generate_on_work_order(wo)
 		self.assertEqual(len(_cards_for(name)), 0)
 

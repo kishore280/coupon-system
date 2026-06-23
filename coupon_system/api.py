@@ -431,6 +431,11 @@ def generate_cards(quantity, campaign, item_code=None, naming_series=None,
 		)
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
+	except Exception:
+		# e.g. a unique-code IntegrityError under concurrent generation — return a
+		# clean retryable error instead of a 500.
+		frappe.log_error(frappe.get_traceback(), "Coupon generate_cards failed")
+		return {"success": False, "error": _("Card generation failed — please retry")}
 
 
 @frappe.whitelist()
