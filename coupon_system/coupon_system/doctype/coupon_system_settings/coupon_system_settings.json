@@ -5,17 +5,24 @@
  "engine": "InnoDB",
  "field_order": [
   "scan_base_url",
+  "code_prefix",
   "play_store_url",
   "app_store_url"
  ],
  "fields": [
   {
    "default": "https://oxifixprivateltd.com/s",
-   "description": "Base URL encoded into each QR/barcode. Card code is appended as a path segment: /s/PAINT-XXXX-XXXX",
+   "description": "Base URL encoded into each QR/barcode. Card code is appended as a path segment: /s/<code>",
    "fieldname": "scan_base_url",
    "fieldtype": "Data",
    "label": "QR Scan Base URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "code_prefix",
+   "fieldtype": "Data",
+   "label": "Card Code Prefix",
+   "description": "Optional brand prefix on every generated card code, e.g. OXFX → OXFX-7K9M-4P2T. Leave blank for no prefix. Letters/digits only."
   },
   {
    "fieldname": "play_store_url",

@@ -1,5 +1,4 @@
 import secrets
-import string
 
 import frappe
 from frappe import _
@@ -66,11 +65,23 @@ def _assert_card_scannable(card):
 		frappe.throw(_("Card expired"))
 
 
-def _generate_code():
-	chars = string.ascii_uppercase + string.digits
-	part1 = "".join(secrets.choice(chars) for _ in range(4))
-	part2 = "".join(secrets.choice(chars) for _ in range(4))
-	return f"{part1}-{part2}"
+# Unambiguous, no-vowel alphabet (Crockford base32 minus vowels, per the de-facto
+# standard for human-transmitted codes). No 0/O, 1/I/L → can't be misread on a
+# printed card; no vowels → can't spell a real or offensive word.
+_CODE_CHARS = "23456789BCDFGHJKMNPQRSTVWXZ"
+
+
+def _generate_code(prefix=""):
+	part1 = "".join(secrets.choice(_CODE_CHARS) for _ in range(4))
+	part2 = "".join(secrets.choice(_CODE_CHARS) for _ in range(4))
+	body = f"{part1}-{part2}"
+	return f"{prefix}-{body}" if prefix else body
+
+
+def _code_prefix():
+	"""Sanitised brand prefix from settings (alphanumeric, upper-case), or ''."""
+	raw = frappe.db.get_single_value("Coupon System Settings", "code_prefix") or ""
+	return "".join(ch for ch in raw.upper() if ch.isalnum())
 
 
 def _campaign_snapshot(campaign):
@@ -506,13 +517,14 @@ def _unique_codes(quantity, seen=None):
 	if seen is None:
 		seen = set()
 
+	prefix = _code_prefix()  # fetched once, not per-code
 	result = []
 	CC = frappe.qb.DocType("Coupon Card")
 
 	while len(result) < quantity:
 		# Overshoot by 3× to minimise round-trips; collision rate is negligible
-		# for XXXX-XXXX (36^8 ≈ 2.8 trillion combinations).
-		candidates = list({_generate_code() for _ in range((quantity - len(result)) * 3)})
+		# for XXXX-XXXX (27^8 ≈ 282 billion combinations).
+		candidates = list({_generate_code(prefix) for _ in range((quantity - len(result)) * 3)})
 		candidates = [c for c in candidates if c not in seen]
 
 		if not candidates:
