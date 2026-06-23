@@ -4,11 +4,11 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "architecture_help",
   "scan_base_url",
   "code_prefix",
   "play_store_url",
-  "app_store_url"
+  "app_store_url",
+  "architecture_help"
  ],
  "fields": [
   {
