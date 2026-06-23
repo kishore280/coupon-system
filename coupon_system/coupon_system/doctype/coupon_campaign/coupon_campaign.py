@@ -20,8 +20,8 @@ class CouponCampaign(Document):
 
 
 def retire_campaign_cards(campaign):
-	"""Mark every unused (Active/Generated) card of a campaign as Expired.
-	Returns the number of cards retired."""
+	"""Mark every unused (Active/Generated) card of a campaign as Retired (distinct
+	from Expired, which is a card reaching its own date). Returns the count."""
 	count = frappe.db.count(
 		"Coupon Card",
 		{"campaign": campaign, "status": ["in", ["Active", "Generated"]], "is_used": 0},
@@ -29,7 +29,7 @@ def retire_campaign_cards(campaign):
 	if count:
 		frappe.db.sql(
 			"""
-			UPDATE `tabCoupon Card` SET status = 'Expired'
+			UPDATE `tabCoupon Card` SET status = 'Retired'
 			WHERE campaign = %s AND is_used = 0 AND status IN ('Active', 'Generated')
 			""",
 			campaign,

@@ -58,7 +58,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Generated\nActive\nRedeemed\nExpired\nVoid",
+   "options": "Generated\nActive\nRedeemed\nExpired\nRetired\nVoid",
    "search_index": 1
   },
   {

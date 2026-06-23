@@ -139,7 +139,7 @@ class TestCouponCard(FrappeTestCase):
 		camp.save(ignore_permissions=True)
 		self.assertEqual(
 			frappe.db.get_value("Coupon Card", {"code": "TEST-DYN-0007"}, "status"),
-			"Expired",
+			"Retired",
 		)
 		# restore (and the card stays Expired — that's correct, it's retired)
 		camp.end_date = None

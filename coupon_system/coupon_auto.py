@@ -111,12 +111,12 @@ def expire_cards():
 		t,
 	)
 
-	# 2. Cards whose campaign has ended (retires the whole campaign at once)
+	# 2. Cards whose campaign has ended → Retired (distinct from own-date Expired)
 	frappe.db.sql(
 		"""
 		UPDATE `tabCoupon Card` cc
 		JOIN `tabCoupon Campaign` camp ON camp.name = cc.campaign
-		SET cc.status = 'Expired'
+		SET cc.status = 'Retired'
 		WHERE cc.status IN ('Active', 'Generated') AND cc.is_used = 0
 		  AND camp.end_date IS NOT NULL AND camp.end_date < %s
 		""",

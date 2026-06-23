@@ -29,6 +29,7 @@ def execute(filters=None):
 			SUM(status = 'Active')    AS active,
 			SUM(status = 'Redeemed')  AS redeemed,
 			SUM(status = 'Expired')   AS expired,
+			SUM(status = 'Retired')   AS retired,
 			SUM(status = 'Void')      AS void,
 			COUNT(*)                  AS total
 		FROM `tabCoupon Card`
@@ -47,6 +48,7 @@ def execute(filters=None):
 		{"label": _("Active"), "fieldname": "active", "fieldtype": "Int", "width": 90},
 		{"label": _("Redeemed"), "fieldname": "redeemed", "fieldtype": "Int", "width": 100},
 		{"label": _("Expired"), "fieldname": "expired", "fieldtype": "Int", "width": 90},
+		{"label": _("Retired"), "fieldname": "retired", "fieldtype": "Int", "width": 90},
 		{"label": _("Void"), "fieldname": "void", "fieldtype": "Int", "width": 80},
 		{"label": _("Total"), "fieldname": "total", "fieldtype": "Int", "width": 90},
 	]

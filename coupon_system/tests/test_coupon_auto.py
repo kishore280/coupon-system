@@ -174,5 +174,5 @@ class TestCouponAutoWorkOrder(FrappeTestCase):
 		frappe.db.set_value("Coupon Campaign", _CAMPAIGN, "end_date", add_days(today(), -1))
 		expire_cards()
 		statuses = {c["status"] for c in _cards_for(name)}
-		self.assertEqual(statuses, {"Expired"})
+		self.assertEqual(statuses, {"Retired"})
 		frappe.db.set_value("Coupon Campaign", _CAMPAIGN, "end_date", None)  # restore

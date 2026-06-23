@@ -60,6 +60,8 @@ def _assert_card_scannable(card):
 		frappe.throw(_("Card is not active yet"))
 	if card.get("status") == "Redeemed" or card.get("is_used"):
 		frappe.throw(_("Card already redeemed"))
+	if card.get("status") == "Retired":
+		frappe.throw(_("This campaign has ended"))
 	if card.get("status") == "Expired" or getdate(card.expiry_date) < getdate(today()):
 		frappe.throw(_("Card expired"))
 
@@ -384,6 +386,7 @@ def campaign_card_counts(campaign):
 		"active": active,
 		"redeemed": counts.get("Redeemed", 0),
 		"expired": counts.get("Expired", 0),
+		"retired": counts.get("Retired", 0),
 		"void": counts.get("Void", 0),
 		"potential_points": active * points,  # if every Active card were scanned now
 	}
