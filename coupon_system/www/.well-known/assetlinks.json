@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "com.oxitech.oxifix",
       "sha256_cert_fingerprints": [
-        "08:F3:9A:0D:09:AA:76:D4:C6:85:84:7D:E1:30:99:2E:B1:92:7C:67:8A:F4:7D:1C:E3:5C:3F:23:E2:41:25:22"
+        "08:F3:9A:0D:09:AA:76:D4:C6:85:84:7D:E1:30:99:2E:B1:92:7C:67:8A:F4:7D:1C:E3:5C:3F:23:E2:41:25:22",
+        "6C:72:A4:46:15:42:47:B9:B3:F5:94:6A:D2:FF:F1:90:AF:82:90:8D:07:19:D3:9F:9D:D1:15:FF:C9:BD:96:C8"
       ]
     }
   }

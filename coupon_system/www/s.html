@@ -99,7 +99,7 @@
     </div>
     {% endif %}
 
-    <div class="scan-code">Card code: <b>{{ code }}</b></div>
+    {% if code %}<div class="scan-code">Card code: <b>{{ code }}</b></div>{% endif %}
   </div>
 </div>
 {% endblock %}

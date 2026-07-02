@@ -4,9 +4,9 @@ no_cache = 1
 
 
 def get_context(context):
+	# No code (e.g. bare /s/ — used by Play Console App Links validation) must
+	# still return HTTP 200, so render the generic "Open in App" landing page.
 	code = frappe.form_dict.get("code") or ""
-	if not code:
-		frappe.throw("Invalid link", frappe.NotFound)
 
 	context.code = code
 	context.play_store_url = frappe.db.get_single_value("Coupon System Settings", "play_store_url") or "#"
