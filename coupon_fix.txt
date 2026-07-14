@@ -182,3 +182,12 @@ COUPON SYSTEM - FIX LIST
    - Full 65-test suite passes unmodified after adding the workflow. Deployed via
      bench migrate (creates the Workflow State "Paid" + the Workflow doc) + site
      restart.
+   - [FOOTGUN, found via live testing on real committed data] apply_workflow(doc, action)
+     (workflow.py:101-102) does `doc.load_from_db()` immediately on entry, which discards
+     ANY in-memory field changes made before calling it - setting doc.rejection_reason
+     right before calling apply_workflow(doc, "Reject") gets silently wiped, the field
+     stays blank. apply_workflow only ever applies the state transition itself, never a
+     simultaneous field edit. Practical guidance for staff: to record a rejection reason,
+     do it as a SEPARATE save - either edit+save Rejection Reason first then click
+     Reject, or click Reject first then edit+save the reason afterward (safe, since our
+     controller only fires ledger/transition logic when status itself actually changes).
