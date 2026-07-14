@@ -255,6 +255,10 @@ def balance(phone):
 @frappe.whitelist()
 def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+
 		if not phone or not isinstance(phone, str) or not phone.strip():
 			frappe.throw(_("phone is required"))
 

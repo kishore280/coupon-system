@@ -64,10 +64,14 @@ COUPON SYSTEM - FIX LIST
    O(1) per redeem call, not O(N) per allowed store (it uses a single `name IN (...)`
    batch query, not a loop).
 
-4. [OPEN] redeem() has no role/permission check at all - scan()/balance() gate on
-   {"System Manager","Coupon Manager","Coupon Mobile"}, reverse_redeem() gates on
-   {"System Manager","Coupon Manager"}, but redeem() checks nothing. Found while
-   applying the quality-code-review skill checklist; deliberately not fixed since it
-   changes existing behavior beyond what was asked - could break a working integration
-   if one currently relies on the absence of a role check. Needs a decision, not just
-   a fix.
+4. [FIXED 2026-07-14] redeem() had no role/permission check at all - scan()/balance()
+   gate on {"System Manager","Coupon Manager","Coupon Mobile"}, reverse_redeem() gates
+   on {"System Manager","Coupon Manager"}, but redeem() checked nothing. Found while
+   applying the quality-code-review skill checklist.
+   Fix applied: redeem() now gates on {"System Manager","Coupon Manager"}, matching
+   reverse_redeem() exactly (both are invoice-linked branch/POS operations, not
+   customer self-service like scan()/balance(), so "Coupon Mobile" was deliberately
+   left out). Regression test added: test_redeem_permission_denied_without_role
+   (creates a roleless test user, calls redeem() as that user via self.set_user(),
+   asserts it's rejected). Deployed - Oxifixprivateltd site process restarted (code-only
+   change, no schema migration needed). Full suite (56 tests) passes.

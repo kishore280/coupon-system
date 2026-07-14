@@ -95,6 +95,8 @@ class TestCouponCard(FrappeTestCase):
 			frappe.delete_doc("Coupon Campaign", _TEST_CAMPAIGN, ignore_permissions=True, force=True)
 		for name in frappe.get_all("Coupon Store", filters={"store_name": ["like", "TEST Store%"]}, pluck="name"):
 			frappe.delete_doc("Coupon Store", name, ignore_permissions=True, force=True)
+		if frappe.db.exists("User", "test-coupon-no-role@example.com"):
+			frappe.delete_doc("User", "test-coupon-no-role@example.com", ignore_permissions=True, force=True)
 		super().tearDownClass()
 
 	def setUp(self):
@@ -187,6 +189,19 @@ class TestCouponCard(FrappeTestCase):
 		result = scan(self.phone, "TEST-DOESNOTEXIST")
 		self.assertFalse(result["success"])
 		self.assertIn("not found", result["error"])
+
+	def test_redeem_permission_denied_without_role(self):
+		test_user = "test-coupon-no-role@example.com"
+		if not frappe.db.exists("User", test_user):
+			frappe.get_doc({
+				"doctype": "User", "email": test_user, "first_name": "Test No Role",
+				"send_welcome_email": 0, "roles": [],
+			}).insert(ignore_permissions=True)
+		make_card("TEST-PERM-0001", points_value=100)
+		with self.set_user(test_user):
+			result = redeem(self.phone, 50, _SITE_URL, "SINV-TEST-PERM-001", code="TEST-PERM-0001")
+		self.assertFalse(result["success"])
+		self.assertIn("permitted", result["error"].lower())
 
 	def test_redeem_phone_sufficient_balance(self):
 		make_card("TEST-AAAA-0004", points_value=500)
