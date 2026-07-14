@@ -4,7 +4,15 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, today
 
-from coupon_system.api import balance, bulk_generate_cards, generate_cards, redeem, reverse_redeem, scan
+from coupon_system.api import (
+	_get_campaign_allowed_site_urls,
+	balance,
+	bulk_generate_cards,
+	generate_cards,
+	redeem,
+	reverse_redeem,
+	scan,
+)
 
 _ITEM_CODE = None
 _SITE_URL = "https://test.oxifixinframart.com"
@@ -35,6 +43,22 @@ def cleanup_user(phone):
 	frappe.db.delete("Coupon Ledger", {"phone": phone})
 	if frappe.db.exists("Coupon User", phone):
 		frappe.delete_doc("Coupon User", phone, ignore_permissions=True, force=True)
+
+
+def ensure_test_store(site_url, store_name=None):
+	store_name = store_name or f"TEST Store {site_url}"
+	if not frappe.db.exists("Coupon Store", store_name):
+		doc = frappe.new_doc("Coupon Store")
+		doc.store_name = store_name
+		doc.site_url = site_url
+		doc.insert(ignore_permissions=True)
+	return store_name
+
+
+def set_campaign_allowed_stores(campaign, store_names):
+	camp = frappe.get_doc("Coupon Campaign", campaign)
+	camp.set("allowed_stores", [{"store": s} for s in store_names])
+	camp.save(ignore_permissions=True)
 
 
 _TEST_CAMPAIGN = "TEST Plumber 50"
@@ -69,6 +93,8 @@ class TestCouponCard(FrappeTestCase):
 		frappe.db.delete("Coupon Card", {"campaign": _TEST_CAMPAIGN})
 		if frappe.db.exists("Coupon Campaign", _TEST_CAMPAIGN):
 			frappe.delete_doc("Coupon Campaign", _TEST_CAMPAIGN, ignore_permissions=True, force=True)
+		for name in frappe.get_all("Coupon Store", filters={"store_name": ["like", "TEST Store%"]}, pluck="name"):
+			frappe.delete_doc("Coupon Store", name, ignore_permissions=True, force=True)
 		super().tearDownClass()
 
 	def setUp(self):
@@ -251,6 +277,86 @@ class TestCouponCard(FrappeTestCase):
 		result = reverse_redeem("SINV-DOES-NOT-EXIST", _SITE_URL)
 		self.assertFalse(result["success"])
 		self.assertIn("redemption found", result["error"].lower())
+
+	def test_redeem_missing_site_url_rejected(self):
+		make_card("TEST-STORE-0001", points_value=100)
+		result = redeem(self.phone, 50, "", "SINV-TEST-STORE-001", code="TEST-STORE-0001")
+		self.assertFalse(result["success"])
+		self.assertIn("site_url", result["error"])
+
+	def test_redeem_site_url_type_confusion_rejected(self):
+		# a list instead of a string used to slip past `not site_url` (non-empty
+		# list is truthy) and get parsed by frappe.db.exists as a filter operator
+		make_card("TEST-STORE-0002", points_value=100)
+		result = redeem(self.phone, 50, ["!=", ""], "SINV-TEST-STORE-002", code="TEST-STORE-0002")
+		self.assertFalse(result["success"])
+		self.assertIn("site_url", result["error"])
+
+	def test_redeem_unrestricted_campaign_any_store_allowed(self):
+		make_card("TEST-STORE-0003", points_value=100, campaign=self.campaign)
+		result = redeem(self.phone, 50, "https://random-store.example.com",
+						 "SINV-TEST-STORE-003", code="TEST-STORE-0003")
+		self.assertTrue(result["success"])
+
+	def test_redeem_restricted_campaign_correct_store_allowed(self):
+		store = ensure_test_store(_SITE_URL)
+		make_card("TEST-STORE-0004", points_value=100, campaign=self.campaign)
+		set_campaign_allowed_stores(self.campaign, [store])
+		try:
+			result = redeem(self.phone, 50, _SITE_URL, "SINV-TEST-STORE-004", code="TEST-STORE-0004")
+			self.assertTrue(result["success"])
+		finally:
+			set_campaign_allowed_stores(self.campaign, [])
+
+	def test_redeem_restricted_campaign_wrong_store_blocked(self):
+		store = ensure_test_store(_SITE_URL)
+		make_card("TEST-STORE-0005", points_value=100, campaign=self.campaign)
+		set_campaign_allowed_stores(self.campaign, [store])
+		try:
+			result = redeem(self.phone, 50, "https://not-allowed.example.com",
+							 "SINV-TEST-STORE-005", code="TEST-STORE-0005")
+			self.assertFalse(result["success"])
+			self.assertIn("cannot be redeemed at this store", result["error"])
+		finally:
+			set_campaign_allowed_stores(self.campaign, [])
+
+	def test_redeem_restriction_change_applies_live_to_unused_card(self):
+		# card generated while unrestricted, THEN campaign gets restricted —
+		# the still-unredeemed card should immediately pick up the new rule
+		store = ensure_test_store(_SITE_URL)
+		make_card("TEST-STORE-0006", points_value=100, campaign=self.campaign)
+		set_campaign_allowed_stores(self.campaign, [store])
+		try:
+			result = redeem(self.phone, 50, "https://not-allowed.example.com",
+							 "SINV-TEST-STORE-006", code="TEST-STORE-0006")
+			self.assertFalse(result["success"])
+		finally:
+			set_campaign_allowed_stores(self.campaign, [])
+
+	def test_allowed_site_urls_query_count_is_constant_not_per_store(self):
+		# the lookup must stay O(1) (2 batched queries + metadata/column-cache checks)
+		# regardless of how many stores are on the campaign - not O(N) per store
+		stores = [ensure_test_store(f"https://qc-{i}.example.com", f"TEST Store QC {i}") for i in range(10)]
+		set_campaign_allowed_stores(self.campaign, stores)
+		try:
+			with self.assertQueryCount(6):
+				allowed = _get_campaign_allowed_site_urls(self.campaign)
+			self.assertEqual(len(allowed), 10)
+		finally:
+			set_campaign_allowed_stores(self.campaign, [])
+
+	def test_redeem_by_balance_ignores_store_restriction(self):
+		# once points are in the shared balance they're fungible — store
+		# restriction only gates the specific card-code redemption, not the balance
+		store = ensure_test_store(_SITE_URL)
+		make_card("TEST-STORE-0007", points_value=200, campaign=self.campaign)
+		scan(self.phone, "TEST-STORE-0007")
+		set_campaign_allowed_stores(self.campaign, [store])
+		try:
+			result = redeem(self.phone, 50, "https://not-allowed.example.com", "SINV-TEST-STORE-007")
+			self.assertTrue(result["success"])
+		finally:
+			set_campaign_allowed_stores(self.campaign, [])
 
 	def test_generate_cards_count_and_uniqueness(self):
 		result = generate_cards(quantity=5, campaign=self.campaign, item_code=get_item_code())

@@ -1,0 +1,73 @@
+COUPON SYSTEM - FIX LIST
+========================
+
+1. [FIXED 2026-07-14] site_url was mandatory in redeem() and reverse_redeem()
+   (coupon_system/api.py) but only implicitly - no default value in the signature, and
+   unlike phone/amount there was no explicit validation check.
+   - If a caller omitted it, Python raised TypeError before the try/except could catch
+     it, so it fell through as an unhandled 500 instead of the clean
+     {"success": False, "error": "..."} shape every other failure returns.
+   Fix applied: explicit `if not X or not isinstance(X, str) or not X.strip(): throw`
+   checks added for phone, site_url, and invoice_no at the top of both functions.
+   Still open: site_url is still trusted as-is once validated as a non-empty string -
+   not derived from auth or checked against a known-branch registry. Anyone with a
+   valid API key can claim any site_url.
+
+2. [FIXED 2026-07-14] Type-confusion filter-injection risk in redeem()/reverse_redeem().
+   Both pass invoice_no/site_url straight into dict-style filters
+   (`frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "site_url": site_url,
+   "type": "DEBIT"})`). Frappe's dict filters interpret a list value as
+   [operator, value] - so a caller sending site_url as a JSON array (e.g.
+   ["!=", ""]) instead of a string would pass the old `not site_url` check (a
+   non-empty list is truthy) and get parsed as a filter *operator*, silently
+   changing what the query matches (e.g. bypassing the "already redeemed" duplicate
+   check). Fix applied: added `isinstance(X, str)` to the validation for phone,
+   site_url, invoice_no in both functions.
+   Still open (not yet audited/fixed): the same dict-filter pattern exists elsewhere
+   in api.py with unvalidated params - e.g. `code` in scan()/redeem()
+   (`frappe.db.get_value("Coupon Card", {"code": code}, "name")`). A full pass over
+   every @frappe.whitelist method in api.py for this pattern is recommended.
+
+3. [ADDED 2026-07-14] Store-restriction feature for redeem() only (by design, not scan()):
+   - New `Coupon Store` doctype: store_name, site_url, is_active.
+   - New `Coupon Campaign Store` child doctype backing a Table MultiSelect field
+     `allowed_stores` on Coupon Campaign.
+   - Empty allowed_stores = unrestricted (default, backward compatible with every
+     existing campaign/card).
+   - Enforced live (not snapshotted onto Coupon Card) via
+     _get_campaign_allowed_site_urls() inside _assert_card_scannable(card, site_url=...),
+     called only from redeem()'s code-based branch - scan() still passes no site_url
+     so the earn flow is never store-gated.
+   - Scope limitation: this only gates which store can redeem a specific card code.
+     Once points are credited to a phone's balance they are fungible and can be spent
+     anywhere via redeem()'s no-code balance-only branch - store restriction does not
+     follow the points after they're earned.
+   - [DEPLOYED 2026-07-14] Applied via `bench --site oxifixprivateltd.com migrate`,
+     Oxifixprivateltd site process restarted. 8 new tests added to test_coupon_card.py
+     (missing/type-confused site_url, unrestricted-any-store, correct-store-allowed,
+     wrong-store-blocked, live-restriction-change, balance-redeem-ignores-restriction).
+     Full coupon_system test suite (54 tests across all test files) passes:
+     `bench --site oxifixprivateltd.com run-tests --module <module> --skip-before-tests`
+     (--skip-before-tests needed - unrelated india_compliance/erpnext fixture gaps on
+     this site break the default before_tests hook; not caused by this change).
+
+5. [ADDED 2026-07-14] Query-count regression test for _get_campaign_allowed_site_urls
+   (coupon_system/api.py). Measured empirically via a scratch script before writing the
+   test: a full redeem(code=...) call is 54 total queries, only 3 of which are our new
+   store-check code - the rest is Frappe's own per-document-save hook overhead
+   (WhatsApp Notification, Workflow, Assignment Rule, Milestone Tracker checks fired by
+   .insert()/.save(), unrelated to this feature). A blanket assertQueryCount on the
+   whole redeem() call would be too brittle (any unrelated hook change elsewhere would
+   break it). Instead added a targeted test asserting _get_campaign_allowed_site_urls
+   itself stays at a fixed <=6 queries (2 batched lookups + information_schema
+   column-cache misses on first access) even with 10 stores on a campaign - proves it's
+   O(1) per redeem call, not O(N) per allowed store (it uses a single `name IN (...)`
+   batch query, not a loop).
+
+4. [OPEN] redeem() has no role/permission check at all - scan()/balance() gate on
+   {"System Manager","Coupon Manager","Coupon Mobile"}, reverse_redeem() gates on
+   {"System Manager","Coupon Manager"}, but redeem() checks nothing. Found while
+   applying the quality-code-review skill checklist; deliberately not fixed since it
+   changes existing behavior beyond what was asked - could break a working integration
+   if one currently relies on the absence of a role check. Needs a decision, not just
+   a fix.

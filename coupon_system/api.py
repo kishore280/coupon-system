@@ -51,8 +51,24 @@ def _resolve_card_points(card):
 	return cint(card.get("points_value"))
 
 
-def _assert_card_scannable(card):
-	"""Raise if a card cannot be earned/redeemed right now (lifecycle + expiry)."""
+def _get_campaign_allowed_site_urls(campaign):
+	"""Site URLs a campaign is restricted to. Empty set = unrestricted (default)."""
+	store_names = frappe.get_all(
+		"Coupon Campaign Store", filters={"parent": campaign}, pluck="store"
+	)
+	if not store_names:
+		return set()
+	return set(frappe.get_all(
+		"Coupon Store", filters={"name": ["in", store_names]}, pluck="site_url"
+	))
+
+
+def _assert_card_scannable(card, site_url=None):
+	"""Raise if a card cannot be earned/redeemed right now (lifecycle + expiry + store).
+
+	site_url is only checked when passed — the scan (earn) flow leaves it None and
+	is never store-restricted; only redeem() passes it through.
+	"""
 	if card.get("status") == "Void":
 		frappe.throw(_("Card has been voided"))
 	if card.get("status") == "Generated":
@@ -63,6 +79,10 @@ def _assert_card_scannable(card):
 		frappe.throw(_("This campaign has ended"))
 	if card.get("status") == "Expired" or getdate(card.expiry_date) < getdate(today()):
 		frappe.throw(_("Card expired"))
+	if site_url and card.get("campaign"):
+		allowed = _get_campaign_allowed_site_urls(card.campaign)
+		if allowed and site_url not in allowed:
+			frappe.throw(_("This card cannot be redeemed at this store"))
 
 
 # Unambiguous, no-vowel alphabet (Crockford base32 minus vowels, per the de-facto
@@ -235,8 +255,14 @@ def balance(phone):
 @frappe.whitelist()
 def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 	try:
-		if not phone or not str(phone).strip():
+		if not phone or not isinstance(phone, str) or not phone.strip():
 			frappe.throw(_("phone is required"))
+
+		if not site_url or not isinstance(site_url, str) or not site_url.strip():
+			frappe.throw(_("site_url is required"))
+
+		if not invoice_no or not isinstance(invoice_no, str) or not invoice_no.strip():
+			frappe.throw(_("invoice_no is required"))
 
 		amount = cint(amount)
 		if amount <= 0:
@@ -254,7 +280,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			frappe.db.sql("SELECT name FROM `tabCoupon Card` WHERE name = %s FOR UPDATE", card_name)
 			card = frappe.get_doc("Coupon Card", card_name)
 
-			_assert_card_scannable(card)
+			_assert_card_scannable(card, site_url=site_url)
 
 			points = _resolve_card_points(card)
 			if points < amount:
@@ -335,6 +361,12 @@ def reverse_redeem(invoice_no, site_url):
 		roles = frappe.get_roles()
 		if "System Manager" not in roles and "Coupon Manager" not in roles:
 			frappe.throw(_("Not permitted"))
+
+		if not invoice_no or not isinstance(invoice_no, str) or not invoice_no.strip():
+			frappe.throw(_("invoice_no is required"))
+
+		if not site_url or not isinstance(site_url, str) or not site_url.strip():
+			frappe.throw(_("site_url is required"))
 
 		debit = frappe.db.get_value(
 			"Coupon Ledger",

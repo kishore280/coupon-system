@@ -13,6 +13,8 @@
   "points",
   "validity_months",
   "end_date",
+  "section_break_stores",
+  "allowed_stores",
   "section_break_desc",
   "description"
  ],
@@ -66,6 +68,18 @@
    "fieldtype": "Date",
    "label": "Campaign End Date",
    "description": "Optional. On this date the whole campaign retires: every unused card under it becomes Expired and can no longer be scanned, regardless of the card's own date."
+  },
+  {
+   "fieldname": "section_break_stores",
+   "fieldtype": "Section Break",
+   "label": "Store Restriction"
+  },
+  {
+   "fieldname": "allowed_stores",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Stores",
+   "options": "Coupon Campaign Store",
+   "description": "Leave empty to allow redemption at any store (default). If set, only these stores may redeem cards under this campaign — checked live at redeem time, so changes apply immediately to unredeemed cards."
   },
   {
    "fieldname": "section_break_desc",
