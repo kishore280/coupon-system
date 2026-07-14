@@ -17,9 +17,10 @@
  "fields": [
   {
    "fieldname": "phone",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Phone",
+   "options": "Coupon User",
    "reqd": 1,
    "search_index": 1
   },
@@ -49,9 +50,11 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Optional - blank for site-less entries (earn/withdrawal). When set, must be a registered Coupon Store.",
    "fieldname": "site_url",
-   "fieldtype": "Data",
-   "label": "Site URL"
+   "fieldtype": "Link",
+   "label": "Site URL",
+   "options": "Coupon Store"
   },
   {
    "fieldname": "invoice_no",

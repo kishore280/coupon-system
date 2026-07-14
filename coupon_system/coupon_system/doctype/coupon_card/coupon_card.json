@@ -134,8 +134,9 @@
   },
   {
    "fieldname": "used_by_phone",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Used By Phone",
+   "options": "Coupon User",
    "read_only": 1,
    "search_index": 1
   },

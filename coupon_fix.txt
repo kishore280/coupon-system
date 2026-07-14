@@ -191,3 +191,61 @@ COUPON SYSTEM - FIX LIST
      do it as a SEPARATE save - either edit+save Rejection Reason first then click
      Reject, or click Reject first then edit+save the reason afterward (safe, since our
      controller only fires ledger/transition logic when status itself actually changes).
+
+9. [ADDED 2026-07-14] Converted free-text phone/site_url fields to real Links now that
+   we have Coupon User and Coupon Store as first-class doctypes:
+   - Coupon Withdrawal Request.phone, Coupon Ledger.phone, Coupon Card.used_by_phone:
+     Data -> Link (options: Coupon User). Safe because every write path already
+     guaranteed a Coupon User exists first (_get_or_create_user() always runs before
+     any of these get set) - zero behavior change, pure schema improvement (referential
+     integrity, autocomplete, connections dashboard).
+   - Coupon Ledger.site_url: Data -> Link (options: Coupon Store). NOT the same as the
+     phone case - there is no auto-create-store-on-demand equivalent, so this is a real
+     enforcement change: every site_url passed to redeem()/reverse_redeem() must now
+     correspond to a pre-registered Coupon Store, or the ledger write fails outright.
+     This deliberately closes the long-open item from point 1 ("not checked against a
+     known-branch registry") - explicitly requested ("only our registered coupon store
+     can claim").
+   - Coupon Store.autoname changed from field:store_name to field:site_url, so its own
+     docname IS the exact site_url string a branch sends - no translation/lookup layer
+     needed between "the URL a branch sent" and "the store record it refers to".
+     _get_campaign_allowed_site_urls() simplified accordingly (dropped a now-redundant
+     second query - Coupon Campaign Store's `store` Link values already ARE site_url
+     strings). All existing Coupon Store records were renamed via frappe.rename_doc() to
+     match (cascades correctly to Coupon Campaign Store child rows referencing them).
+   - [OPERATIONAL] Before deploying, checked get_url() (used by
+     oxifix_multisite_sync/coupon_hooks.py to build the site_url sent to redeem()) for
+     every real branch site. Found it's NOT stable per-site without host_name configured
+     in site_config.json - oxifixretail1.com's one real historical redemption recorded
+     `http://<server-ip>:8020` (direct IP:port) while calling get_url() for the same
+     site now (no live request context) returns `http://oxifixretail1.com` (domain form).
+     Registered BOTH known forms for oxifixretail1 as separate Coupon Store records to
+     avoid breaking anything, plus the current get_url() value for every other real
+     branch (oxifix.com, oxifixdemo.com, oxifixinframart.com, oxifixretail.com,
+     oxifixprivateltd.com's IP:port form, and its salem.oxifixinframart.com public
+     domain). [STILL OPEN] Root-cause fix is to set host_name in site_config.json for
+     each branch so get_url() always returns one stable value - not done yet, worth
+     doing before this is relied on heavily, since a branch could still send a THIRD
+     never-before-seen variant if its network path changes again.
+   - Verified via real external HTTP calls (Authorization: token key:secret, exactly
+     how a real branch/mobile client calls this - not just in-process test calls) using
+     two dedicated test API users (Coupon Mobile role, Coupon Manager role; both deleted
+     after): generate_cards, scan, balance, redeem, reverse_redeem, request_withdrawal
+     all persisted correctly through the new Link fields; Mobile correctly blocked from
+     redeem/request_withdrawal over real HTTP, not just in-process.
+   - Full 65-test suite passes; test_coupon_card.py and test_coupon_ledger.py needed
+     fixes since several tests used unregistered site_url strings to mean "any other
+     store" / "the wrong store" - now use registered-but-not-Administrator-owned test
+     stores (_OTHER_SITE_URL) so the tests still exercise the intended business-logic
+     rejection path instead of hitting a LinkValidationError for the wrong reason.
+
+10. [OPEN] Mobile self-service withdrawal request (request_withdrawal open to "Coupon
+    Mobile" role) - still deliberately not done. All mobile-facing calls
+    (scan/balance/would-be request_withdrawal) authenticate as ONE shared system
+    credential (coupon-mobile@system.local), not a per-customer Frappe session - so
+    there is no session-level identity to bind phone to inside coupon_system itself.
+    The real trust boundary has to live in the mobile app's own auth (e.g. OTP
+    verification that a logged-in session really owns the phone before the app ever
+    calls our API with it). Whether opening request_withdrawal to mobile is safe
+    depends entirely on whether that already exists on the app side - unresolved,
+    needs an answer from whoever owns the mobile app before building this.

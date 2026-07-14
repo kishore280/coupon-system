@@ -82,14 +82,13 @@ def _resolve_card_points(card):
 
 
 def _get_campaign_allowed_site_urls(campaign):
-	"""Site URLs a campaign is restricted to. Empty set = unrestricted (default)."""
-	store_names = frappe.get_all(
-		"Coupon Campaign Store", filters={"parent": campaign}, pluck="store"
-	)
-	if not store_names:
-		return set()
+	"""Site URLs a campaign is restricted to. Empty set = unrestricted (default).
+
+	Coupon Store is autonamed by site_url, so the Coupon Campaign Store child
+	table's `store` Link values already ARE the site_url strings - no separate
+	lookup needed to translate a store name into its site_url."""
 	return set(frappe.get_all(
-		"Coupon Store", filters={"name": ["in", store_names]}, pluck="site_url"
+		"Coupon Campaign Store", filters={"parent": campaign}, pluck="store"
 	))
 
 

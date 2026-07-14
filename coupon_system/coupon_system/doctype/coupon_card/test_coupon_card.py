@@ -16,6 +16,7 @@ from coupon_system.api import (
 
 _ITEM_CODE = None
 _SITE_URL = "https://test.oxifixinframart.com"
+_OTHER_SITE_URL = "https://not-allowed.example.com"
 
 
 def get_item_code():
@@ -47,12 +48,12 @@ def cleanup_user(phone):
 
 def ensure_test_store(site_url, store_name=None):
 	store_name = store_name or f"TEST Store {site_url}"
-	if not frappe.db.exists("Coupon Store", store_name):
+	if not frappe.db.exists("Coupon Store", site_url):
 		doc = frappe.new_doc("Coupon Store")
 		doc.store_name = store_name
 		doc.site_url = site_url
 		doc.insert(ignore_permissions=True)
-	return store_name
+	return site_url
 
 
 def set_campaign_allowed_stores(campaign, store_names):
@@ -87,6 +88,10 @@ class TestCouponCard(FrappeTestCase):
 		if not get_item_code():
 			raise unittest.SkipTest("No Items found on this site — skipping coupon tests")
 		cls.campaign = ensure_test_campaign()
+		# Coupon Ledger.site_url is a Link to Coupon Store - every site_url used
+		# anywhere in this suite must be a genuinely registered store.
+		ensure_test_store(_SITE_URL, "TEST Store Default")
+		ensure_test_store(_OTHER_SITE_URL, "TEST Store Other")
 
 	@classmethod
 	def tearDownClass(cls):
@@ -308,8 +313,10 @@ class TestCouponCard(FrappeTestCase):
 		self.assertIn("site_url", result["error"])
 
 	def test_redeem_unrestricted_campaign_any_store_allowed(self):
+		# "any store" now means any REGISTERED store - site_url must always
+		# resolve to a Coupon Store regardless of campaign-level restriction
 		make_card("TEST-STORE-0003", points_value=100, campaign=self.campaign)
-		result = redeem(self.phone, 50, "https://random-store.example.com",
+		result = redeem(self.phone, 50, _OTHER_SITE_URL,
 						 "SINV-TEST-STORE-003", code="TEST-STORE-0003")
 		self.assertTrue(result["success"])
 
@@ -328,7 +335,7 @@ class TestCouponCard(FrappeTestCase):
 		make_card("TEST-STORE-0005", points_value=100, campaign=self.campaign)
 		set_campaign_allowed_stores(self.campaign, [store])
 		try:
-			result = redeem(self.phone, 50, "https://not-allowed.example.com",
+			result = redeem(self.phone, 50, _OTHER_SITE_URL,
 							 "SINV-TEST-STORE-005", code="TEST-STORE-0005")
 			self.assertFalse(result["success"])
 			self.assertIn("cannot be redeemed at this store", result["error"])
@@ -342,14 +349,14 @@ class TestCouponCard(FrappeTestCase):
 		make_card("TEST-STORE-0006", points_value=100, campaign=self.campaign)
 		set_campaign_allowed_stores(self.campaign, [store])
 		try:
-			result = redeem(self.phone, 50, "https://not-allowed.example.com",
+			result = redeem(self.phone, 50, _OTHER_SITE_URL,
 							 "SINV-TEST-STORE-006", code="TEST-STORE-0006")
 			self.assertFalse(result["success"])
 		finally:
 			set_campaign_allowed_stores(self.campaign, [])
 
 	def test_allowed_site_urls_query_count_is_constant_not_per_store(self):
-		# the lookup must stay O(1) (2 batched queries + metadata/column-cache checks)
+		# the lookup must stay O(1) (1 batched query + metadata/column-cache checks)
 		# regardless of how many stores are on the campaign - not O(N) per store
 		stores = [ensure_test_store(f"https://qc-{i}.example.com", f"TEST Store QC {i}") for i in range(10)]
 		set_campaign_allowed_stores(self.campaign, stores)
@@ -368,7 +375,7 @@ class TestCouponCard(FrappeTestCase):
 		scan(self.phone, "TEST-STORE-0007")
 		set_campaign_allowed_stores(self.campaign, [store])
 		try:
-			result = redeem(self.phone, 50, "https://not-allowed.example.com", "SINV-TEST-STORE-007")
+			result = redeem(self.phone, 50, _OTHER_SITE_URL, "SINV-TEST-STORE-007")
 			self.assertTrue(result["success"])
 		finally:
 			set_campaign_allowed_stores(self.campaign, [])

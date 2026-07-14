@@ -16,7 +16,7 @@ class CouponCard(Document):
 		batch_no: DF.Data | None
 		work_order: DF.Data | None
 		is_used: DF.Check
-		used_by_phone: DF.Data | None
+		used_by_phone: DF.Link | None
 		scanned_at: DF.Datetime | None
 	# end: auto-generated types
 

@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "field:store_name",
+ "autoname": "field:site_url",
  "creation": "2026-07-14 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
