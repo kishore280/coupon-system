@@ -146,3 +146,39 @@ COUPON SYSTEM - FIX LIST
      mobile-authenticated user request a payout to their own bank details for someone
      else's phone number's points. Needs proper session-to-phone identity binding across
      the whole mobile-facing API before this can be safely opened to customers directly.
+
+8. [ADDED 2026-07-14] Converted the Paid/Rejected transition to a real Frappe Workflow
+   ("Coupon Withdrawal Request Approval", defined idempotently in code via
+   ensure_withdrawal_workflow() in install.py, run from after_install/after_migrate - not
+   manual Desk clicks, so it's reproducible and lives in git). Read Frappe's own
+   frappe/model/workflow.py source before building rather than assuming behavior:
+   - Reuses the doctype's own `status` Select field as workflow_state_field.
+     create_custom_field_for_workflow_state() (workflow.py:42-61) only auto-creates a new
+     hidden Link field `if not meta.get_field(self.workflow_state_field)` - since `status`
+     already exists, it's reused as-is, confirmed empirically after migrate: 0 Custom
+     Field rows created for this doctype.
+   - Transitions: Pending -[Approve]-> Paid, Pending -[Reject]-> Rejected, both
+     allowed="Coupon Manager", allow_self_approval=1 (this is a small-team tool, not a
+     segregation-of-duties control - blocking self-approval would just be friction).
+   - Workflow adds a role-gated permission/UI layer on top of the exact same doc.save()
+     path already verified race-safe - it does NOT add its own locking
+     (apply_workflow() -> doc.save()/submit()/cancel(), same check_if_latest() as
+     everything else). Confirmed this doesn't break the existing 9 withdrawal tests
+     (which call req.save() directly, not via apply_workflow()) because
+     Administrator - what FrappeTestCase runs as - gets every Role automatically
+     (frappe/permissions.py:506-507), so the Coupon-Manager-gated transition isn't
+     blocked in tests. Our own controller's _handle_status_transition() (validate(),
+     runs at document.py:414) still fires before Frappe's own validate_workflow()
+     (_validate(), document.py:417), so our specific error messages ("Only a Pending
+     request can change status") still win over Workflow's generic one for the same
+     illegal-transition case.
+   - Considered and initially recommended against Workflow (see the evaluation right
+     before this entry) since it adds real setup machinery (Workflow + Workflow State +
+     Workflow Transition + Workflow Action Master records) for zero extra concurrency
+     safety over the plain-field approach - built it anyway per explicit request, but the
+     underlying _post_ledger/lock/snapshot logic from point 7 is completely unchanged;
+     Workflow only adds the approve/reject permission layer and Desk action buttons
+     on top.
+   - Full 65-test suite passes unmodified after adding the workflow. Deployed via
+     bench migrate (creates the Workflow State "Paid" + the Workflow doc) + site
+     restart.

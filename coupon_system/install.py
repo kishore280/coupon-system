@@ -65,15 +65,57 @@ _DEFAULT_CAMPAIGNS = [
 ]
 
 
+_WITHDRAWAL_WORKFLOW = "Coupon Withdrawal Request Approval"
+
+
 def after_install():
 	ensure_custom_fields()
 	seed_campaigns()
 	_create_mobile_user()
+	ensure_withdrawal_workflow()
 
 
 def after_migrate():
 	ensure_custom_fields()
 	seed_campaigns()
+	ensure_withdrawal_workflow()
+
+
+def ensure_withdrawal_workflow():
+	"""Pending -> Paid / Rejected approval workflow for Coupon Withdrawal Request.
+	Idempotent - never overwrites an existing Workflow doc. Reuses the doctype's
+	own `status` Select field as workflow_state_field (Workflow only auto-creates a
+	field if one by that name doesn't already exist), so no extra hidden field or
+	duplicate status tracking is introduced."""
+	if not frappe.db.exists("Workflow State", "Paid"):
+		frappe.get_doc({"doctype": "Workflow State", "workflow_state_name": "Paid"}).insert(
+			ignore_permissions=True)
+
+	if frappe.db.exists("Workflow", _WITHDRAWAL_WORKFLOW):
+		return
+
+	workflow = frappe.new_doc("Workflow")
+	workflow.workflow_name = _WITHDRAWAL_WORKFLOW
+	workflow.document_type = "Coupon Withdrawal Request"
+	workflow.workflow_state_field = "status"
+	workflow.is_active = 1
+
+	for state in ("Pending", "Paid", "Rejected"):
+		workflow.append("states", {"state": state, "doc_status": "0", "allow_edit": "Coupon Manager"})
+
+	# allow_self_approval=1: this is a small-team tool, not a segregation-of-duties
+	# control - the same one or two staff members request and approve payouts.
+	workflow.append("transitions", {
+		"state": "Pending", "action": "Approve", "next_state": "Paid",
+		"allowed": "Coupon Manager", "allow_self_approval": 1,
+	})
+	workflow.append("transitions", {
+		"state": "Pending", "action": "Reject", "next_state": "Rejected",
+		"allowed": "Coupon Manager", "allow_self_approval": 1,
+	})
+
+	workflow.insert(ignore_permissions=True)
+	print(f"[coupon_system] Created workflow: {_WITHDRAWAL_WORKFLOW}")
 
 
 def seed_campaigns():
