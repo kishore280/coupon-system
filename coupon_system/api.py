@@ -22,6 +22,22 @@ def _get_balance(phone):
 	return totals.get("CREDIT", 0) - totals.get("DEBIT", 0)
 
 
+def _post_ledger(phone, entry_type, points, description, site_url=None, invoice_no=None):
+	"""The one place that writes a Coupon Ledger row. site_url/invoice_no are
+	optional store context, not a precondition of recording a CREDIT or DEBIT -
+	callers with no store (e.g. a withdrawal) simply omit them."""
+	entry = frappe.new_doc("Coupon Ledger")
+	entry.phone = phone
+	entry.type = entry_type
+	entry.points = points
+	entry.description = description
+	entry.site_url = site_url
+	entry.invoice_no = invoice_no
+	entry.timestamp = now_datetime()
+	entry.insert(ignore_permissions=True)
+	return entry
+
+
 def _get_or_create_user(phone, full_name=None):
 	if frappe.db.exists("Coupon User", phone):
 		return frappe.get_doc("Coupon User", phone)
@@ -176,13 +192,7 @@ def scan(phone, code, full_name=None):
 			card.scanned_at = now_datetime()
 			card.save(ignore_permissions=True)
 
-			ledger = frappe.new_doc("Coupon Ledger")
-			ledger.phone = phone
-			ledger.type = "CREDIT"
-			ledger.points = points
-			ledger.description = f"Card {code} scanned"
-			ledger.timestamp = now_datetime()
-			ledger.insert(ignore_permissions=True)
+			_post_ledger(phone, "CREDIT", points, f"Card {code} scanned")
 		except Exception:
 			frappe.db.rollback(save_point="coupon_scan")
 			raise
@@ -300,24 +310,8 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				card.scanned_at = now_datetime()
 				card.save(ignore_permissions=True)
 
-				credit = frappe.new_doc("Coupon Ledger")
-				credit.phone = phone
-				credit.type = "CREDIT"
-				credit.points = points
-				credit.description = f"Card {code} redeemed"
-				credit.site_url = site_url
-				credit.timestamp = now_datetime()
-				credit.insert(ignore_permissions=True)
-
-				debit = frappe.new_doc("Coupon Ledger")
-				debit.phone = phone
-				debit.type = "DEBIT"
-				debit.points = amount
-				debit.description = "Redeemed"
-				debit.site_url = site_url
-				debit.invoice_no = invoice_no
-				debit.timestamp = now_datetime()
-				debit.insert(ignore_permissions=True)
+				_post_ledger(phone, "CREDIT", points, f"Card {code} redeemed", site_url=site_url)
+				_post_ledger(phone, "DEBIT", amount, "Redeemed", site_url=site_url, invoice_no=invoice_no)
 			except Exception:
 				frappe.db.rollback(save_point="coupon_redeem")
 				raise
@@ -332,15 +326,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 
 			frappe.db.savepoint("coupon_redeem")
 			try:
-				debit = frappe.new_doc("Coupon Ledger")
-				debit.phone = phone
-				debit.type = "DEBIT"
-				debit.points = amount
-				debit.description = "Redeemed"
-				debit.site_url = site_url
-				debit.invoice_no = invoice_no
-				debit.timestamp = now_datetime()
-				debit.insert(ignore_permissions=True)
+				_post_ledger(phone, "DEBIT", amount, "Redeemed", site_url=site_url, invoice_no=invoice_no)
 			except Exception:
 				frappe.db.rollback(save_point="coupon_redeem")
 				raise
@@ -389,15 +375,8 @@ def reverse_redeem(invoice_no, site_url):
 		}):
 			frappe.throw(_("Reversal already processed for this invoice"))
 
-		credit = frappe.new_doc("Coupon Ledger")
-		credit.phone = debit.phone
-		credit.type = "CREDIT"
-		credit.points = debit.points
-		credit.description = f"Reversal for invoice {invoice_no}"
-		credit.site_url = site_url
-		credit.invoice_no = invoice_no
-		credit.timestamp = now_datetime()
-		credit.insert(ignore_permissions=True)
+		_post_ledger(debit.phone, "CREDIT", debit.points, f"Reversal for invoice {invoice_no}",
+					 site_url=site_url, invoice_no=invoice_no)
 
 		return {
 			"success": True,
