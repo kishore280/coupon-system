@@ -8,6 +8,9 @@
   "code_prefix",
   "play_store_url",
   "app_store_url",
+  "section_break_withdrawals",
+  "enable_withdrawals",
+  "points_to_currency_rate",
   "architecture_help"
  ],
  "fields": [
@@ -41,6 +44,25 @@
    "fieldtype": "Data",
    "label": "App Store URL",
    "description": "Apple App Store link shown on fallback page when app is not installed"
+  },
+  {
+   "fieldname": "section_break_withdrawals",
+   "fieldtype": "Section Break",
+   "label": "Withdrawals"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. When unchecked, request_withdrawal() is rejected entirely regardless of anything else - a kill switch for the whole feature.",
+   "fieldname": "enable_withdrawals",
+   "fieldtype": "Check",
+   "label": "Enable Withdrawals"
+  },
+  {
+   "default": "1",
+   "description": "1 point = this many currency units. Snapshotted onto each Coupon Withdrawal Request at creation time - changing this later never affects an already-created request.",
+   "fieldname": "points_to_currency_rate",
+   "fieldtype": "Float",
+   "label": "Points to Currency Rate"
   }
  ],
  "issingle": 1,

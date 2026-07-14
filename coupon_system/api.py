@@ -22,6 +22,20 @@ def _get_balance(phone):
 	return totals.get("CREDIT", 0) - totals.get("DEBIT", 0)
 
 
+def _get_locked_withdrawal_points(phone):
+	"""Points already tied up in this phone's own Pending withdrawal requests -
+	the "reserved" half of available = ledger balance - locked. Paid requests are
+	excluded (already reflected in the ledger itself, would double-count) and
+	Rejected requests are excluded (never actually held anything, once closed)."""
+	return cint(frappe.db.get_value(
+		"Coupon Withdrawal Request", {"phone": phone, "status": "Pending"}, ["sum(points)"]
+	) or 0)
+
+
+def _get_available_balance(phone):
+	return _get_balance(phone) - _get_locked_withdrawal_points(phone)
+
+
 def _post_ledger(phone, entry_type, points, description, site_url=None, invoice_no=None):
 	"""The one place that writes a Coupon Ledger row. site_url/invoice_no are
 	optional store context, not a precondition of recording a CREDIT or DEBIT -
@@ -383,6 +397,59 @@ def reverse_redeem(invoice_no, site_url):
 			"phone": debit.phone,
 			"points_restored": debit.points,
 			"new_balance": _get_balance(debit.phone),
+		}
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def request_withdrawal(phone, points, payout_details):
+	"""Create a Pending cash-out request for a phone's points balance.
+
+	No ledger entry is written here - the points are only *locked* (excluded from
+	future available-balance checks via _get_locked_withdrawal_points), not spent.
+	The single Coupon Ledger DEBIT is written by Coupon Withdrawal Request's own
+	controller, exactly once, only when staff transitions it to Paid.
+	"""
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+
+		if not frappe.db.get_single_value("Coupon System Settings", "enable_withdrawals"):
+			frappe.throw(_("Withdrawals are currently disabled"))
+
+		if not phone or not isinstance(phone, str) or not phone.strip():
+			frappe.throw(_("phone is required"))
+
+		points = cint(points)
+		if points <= 0:
+			frappe.throw(_("points must be a positive integer"))
+
+		if not payout_details or not isinstance(payout_details, str) or not payout_details.strip():
+			frappe.throw(_("payout_details is required"))
+
+		if not frappe.db.exists("Coupon User", phone):
+			frappe.throw(_("User not found"))
+
+		# Lock the Coupon User row so two concurrent requests from the same phone
+		# can't both read the same available balance and both get created.
+		frappe.get_doc("Coupon User", phone, for_update=True)
+
+		if points > _get_available_balance(phone):
+			frappe.throw(_("Insufficient balance"))
+
+		request = frappe.new_doc("Coupon Withdrawal Request")
+		request.phone = phone
+		request.points = points
+		request.payout_details = payout_details
+		request.insert(ignore_permissions=True)
+
+		return {
+			"success": True,
+			"request": request.name,
+			"amount": request.amount,
+			"available_balance": _get_available_balance(phone),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}

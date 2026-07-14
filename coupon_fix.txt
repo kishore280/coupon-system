@@ -75,3 +75,74 @@ COUPON SYSTEM - FIX LIST
    (creates a roleless test user, calls redeem() as that user via self.set_user(),
    asserts it's rejected). Deployed - Oxifixprivateltd site process restarted (code-only
    change, no schema migration needed). Full suite (56 tests) passes.
+
+6. [ADDED 2026-07-14] Extracted _post_ledger(phone, entry_type, points, description,
+   site_url=None, invoice_no=None) - the one place that writes a Coupon Ledger row.
+   scan(), both redeem() branches, and reverse_redeem() each hand-rolled an identical
+   frappe.new_doc("Coupon Ledger")...insert() block (4 copies). site_url/invoice_no were
+   never required by the doctype itself (plain optional fields) - only redeem()'s own
+   input validation requires them, which is correct for a store transaction but had
+   gotten accidentally coupled to the ledger-writing mechanism itself. Separates "how to
+   record a ledger entry" (mechanism, no site_url needed) from "what a given caller
+   requires before calling it" (policy, e.g. redeem() requires site_url, withdrawal
+   doesn't). No behavior change - full 56-test suite passed unmodified before deploy.
+
+7. [ADDED 2026-07-14] Coupon Withdrawal Request - cash-out flow, built on _post_ledger.
+   Researched against real precedent before building (ERPNext's own source + industry
+   pattern research) rather than guessing:
+   - New `Coupon Withdrawal Request` doctype: phone, points, amount (snapshotted),
+     payout_details, status (Pending/Paid/Rejected), requested_on/paid_on/rejected_on,
+     rejection_reason. Staff-only (System Manager/Coupon Manager) - NOT open to
+     "Coupon Mobile" role, see open item below.
+   - New `enable_withdrawals` (Check, default 0 - kill switch, opt-in) and
+     `points_to_currency_rate` (Float, default 1) fields on Coupon System Settings.
+   - request_withdrawal(phone, points, payout_details): checks enable_withdrawals first,
+     validates inputs, locks the Coupon User row (frappe.get_doc(..., for_update=True))
+     before checking available balance so two concurrent requests from the same phone
+     can't both pass the same balance check, creates a Pending request.
+     NO ledger entry is written at request time - a Pending request only locks points
+     (excluded from future available-balance checks), it doesn't spend them. Mirrors the
+     industry-standard available-vs-locked-balance pattern (confirmed against ERPNext's
+     own Bin doctype: actual_qty - reserved_qty* = projected_qty, same shape).
+   - _get_locked_withdrawal_points(phone)/_get_available_balance(phone): available =
+     ledger balance - sum(points on that phone's Pending requests only). Must filter
+     status=Pending specifically - Paid is already in the ledger (would double-count if
+     included), Rejected never held anything (would wrongly and permanently shrink
+     available balance if included).
+   - Deliberately did NOT copy ERPNext's stored/incrementally-maintained reserved_qty
+     counter - that exists in ERPNext because Bin is read/written across many linked
+     documents at real scale where a live SUM would be a genuine perf problem. Our
+     per-phone Pending-request count is 0-1 rows in practice - a live SUM is trivially
+     cheap, and a stored counter would only add cache-invalidation risk for no benefit.
+   - The actual DEBIT is written exactly once, by Coupon Withdrawal Request's own
+     validate()/_handle_status_transition(), only when staff transitions Pending->Paid
+     via a normal doc.save() in Desk. Rejected needs zero cleanup code - nothing was
+     ever written to the ledger, so there's nothing to reverse (this is why Pending
+     holds live in their own doctype instead of as a pseudo-state inside Coupon Ledger -
+     keeps the ledger's one invariant, "only real finished facts", intact).
+   - Double-Paid / double-debit race: verified (not assumed) against Frappe's own
+     frappe/model/document.py - check_if_latest() (called from _save(), document.py:408)
+     runs BEFORE run_before_save_methods()/validate() (document.py:414), and re-reads
+     modified fresh from the DB each call (load_doc_before_save), raising
+     TimestampMismatchError on a stale save. So two concurrent "mark Paid" saves on the
+     same request can't both reach validate() (and thus _post_ledger) - the loser is
+     blocked by Frappe's own optimistic concurrency before the side effect runs. No
+     custom for_update lock needed on the Paid transition itself, only on request
+     creation (see above), because request creation isn't a doc.save() race on an
+     existing row, it's a check-then-insert race with no existing row to protect it.
+   - amount is computed once at request creation from points_to_currency_rate and never
+     recomputed on later saves (mirrors ERPNext Payment Entry's
+     `if not self.source_exchange_rate: fetch_live()` snapshot idiom) - changing the
+     global rate later never silently changes an already-created request's payout amount.
+   - Tests added (test_coupon_withdrawal_request.py): disabled-by-default, success,
+     insufficient balance, pending-locks-points-from-second-request, mark-Paid-writes-
+     single-debit, mark-Rejected-has-no-ledger-effect-and-unlocks-points, cannot-change-
+     status-of-non-pending, amount-not-recomputed-on-later-save, permission-denied.
+   - [OPEN] Deliberately staff-mediated (Manager-only), not customer self-service via
+     mobile, because request_withdrawal(phone, ...) takes phone as a free parameter with
+     no binding to the caller's authenticated identity - the same pre-existing gap
+     scan()/balance() already have (neither derives phone from the logged-in mobile
+     session either). Letting "Coupon Mobile" call this directly today would let any
+     mobile-authenticated user request a payout to their own bank details for someone
+     else's phone number's points. Needs proper session-to-phone identity binding across
+     the whole mobile-facing API before this can be safely opened to customers directly.
