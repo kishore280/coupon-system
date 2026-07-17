@@ -45,7 +45,7 @@ def get_my_stores():
 		store = frappe.get_doc("Coupon Store", link.store)
 		if not store.is_active:
 			continue
-		secret = store.get_password("service_secret") if store.service_secret else None
+		secret = store.get_password("service_secret", raise_exception=False)
 		jobs.append(
 			{
 				"store": store.name,
