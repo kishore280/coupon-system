@@ -169,8 +169,10 @@ def _broker_token(job, session):
 @frappe.whitelist()
 def get_available_stores():
 	"""Active stores the logged-in user has NOT enrolled in yet — the app's
-	"apply" list. Stores they're already linked to (any status) are excluded;
-	those show up through get_my_stores instead.
+	"apply" list. Excludes stores they're already linked to (those show up through
+	get_my_stores) and stores that aren't broker-ready: without service
+	credentials we could never mint a token to enroll, so offering an Apply that's
+	guaranteed to fail would just be a dead button.
 	"""
 	user = _require_user()
 
@@ -185,17 +187,25 @@ def get_available_stores():
 		filters={"is_active": 1},
 		fields=["name", "store_name", "site_url"],
 	)
-	return {
-		"stores": [
+
+	available = []
+	for s in stores:
+		if s.name in linked:
+			continue
+		doc = frappe.get_doc("Coupon Store", s.name)
+		# Same credential check the broker makes — no key/secret, no token.
+		if not doc.service_api_key or not doc.get_password(
+			"service_secret", raise_exception=False
+		):
+			continue
+		available.append(
 			{
 				"store": s.name,
 				"store_name": s.store_name,
 				"site_url": (s.site_url or "").rstrip("/"),
 			}
-			for s in stores
-			if s.name not in linked
-		]
-	}
+		)
+	return {"stores": available}
 
 
 @frappe.whitelist()
