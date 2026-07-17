@@ -80,6 +80,7 @@ def get_my_stores():
 		jobs.append(
 			{
 				"store": store.name,
+				"store_name": store.store_name,
 				"site_url": (store.site_url or "").rstrip("/"),
 				"api_key": store.service_api_key,
 				"secret": secret,
