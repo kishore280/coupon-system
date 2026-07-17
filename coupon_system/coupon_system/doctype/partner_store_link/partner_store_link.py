@@ -13,7 +13,6 @@ class PartnerStoreLink(Document):
 
 		user: DF.Link
 		store: DF.Link
-		sales_partner: DF.Data | None
 		status: DF.Literal["Active", "Pending", "Revoked"]
 		enrolled_on: DF.Datetime | None
 	# end: auto-generated types
