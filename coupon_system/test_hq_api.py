@@ -6,6 +6,23 @@ import frappe
 from coupon_system.hq_api import get_my_stores
 
 
+def _mock_session(post_return=None, post_side_effect=None):
+	"""A stand-in for get_request_session() whose .post is controllable."""
+	session = MagicMock()
+	if post_side_effect is not None:
+		session.post.side_effect = post_side_effect
+	else:
+		session.post.return_value = post_return
+	return session
+
+
+def _ok_response(payload):
+	resp = MagicMock()
+	resp.status_code = 200
+	resp.json.return_value = {"message": payload}
+	return resp
+
+
 class TestGetMyStores(unittest.TestCase):
 	def setUp(self):
 		self.site_url = "https://teststore.example.com"
@@ -46,14 +63,14 @@ class TestGetMyStores(unittest.TestCase):
 		finally:
 			frappe.set_user("Administrator")
 
-	@patch("coupon_system.hq_api.requests.post")
-	def test_returns_store_with_brokered_token(self, mock_post):
-		resp = MagicMock()
-		resp.status_code = 200
-		resp.json.return_value = {
-			"message": {"access_token": "a1", "refresh_token": "r1", "expires_in": 3600}
-		}
-		mock_post.return_value = resp
+	@patch("coupon_system.hq_api.get_request_session")
+	def test_returns_store_with_brokered_token(self, mock_get_session):
+		session = _mock_session(
+			post_return=_ok_response(
+				{"access_token": "a1", "refresh_token": "r1", "expires_in": 3600}
+			)
+		)
+		mock_get_session.return_value = session
 
 		out = self._as_user(get_my_stores)
 
@@ -65,22 +82,26 @@ class TestGetMyStores(unittest.TestCase):
 
 		# HQ must call the store's issue_user_token with ITS service key, for this
 		# user, passing the phone so the store provisions the user with a number.
-		_, kwargs = mock_post.call_args
-		self.assertIn("issue_user_token", mock_post.call_args[0][0])
+		_, kwargs = session.post.call_args
+		self.assertIn("issue_user_token", session.post.call_args[0][0])
 		self.assertIn("token svc_key:", kwargs["headers"]["Authorization"])
 		self.assertEqual(kwargs["json"]["user"], self.user)
 		self.assertEqual(kwargs["json"]["mobile_no"], "9998887777")
 
-	@patch("coupon_system.hq_api.requests.post")
-	def test_store_down_is_marked_unavailable(self, mock_post):
-		mock_post.side_effect = Exception("connection refused")
+	@patch("coupon_system.hq_api.get_request_session")
+	def test_store_down_is_marked_unavailable(self, mock_get_session):
+		mock_get_session.return_value = _mock_session(
+			post_side_effect=Exception("connection refused")
+		)
 		out = self._as_user(get_my_stores)
 		self.assertEqual(out["stores"][0]["error"], "unavailable")
 		self.assertNotIn("access_token", out["stores"][0])
 
-	@patch("coupon_system.hq_api.requests.post")
-	def test_phoneless_user_is_rejected_before_any_store(self, mock_post):
-		# A user with no mobile number must be stopped at HQ — no store call at all.
+	@patch("coupon_system.hq_api.get_request_session")
+	def test_phoneless_user_is_rejected_before_any_store(self, mock_get_session):
+		session = _mock_session(post_return=_ok_response({}))
+		mock_get_session.return_value = session
+
 		phoneless = "nophone_partner@example.com"
 		if not frappe.db.exists("User", phoneless):
 			user = frappe.new_doc("User")
@@ -95,7 +116,7 @@ class TestGetMyStores(unittest.TestCase):
 				get_my_stores()
 		finally:
 			frappe.set_user("Administrator")
-		mock_post.assert_not_called()
+		session.post.assert_not_called()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
