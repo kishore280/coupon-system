@@ -7,7 +7,10 @@
  "field_order": [
   "store_name",
   "site_url",
-  "is_active"
+  "is_active",
+  "section_break_broker",
+  "service_api_key",
+  "service_secret"
  ],
  "fields": [
   {
@@ -34,6 +37,23 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Is Active"
+  },
+  {
+   "fieldname": "section_break_broker",
+   "fieldtype": "Section Break",
+   "label": "HQ Broker Credentials"
+  },
+  {
+   "description": "API key HQ uses to call this store's issue_user_token / token endpoints.",
+   "fieldname": "service_api_key",
+   "fieldtype": "Data",
+   "label": "Service API Key"
+  },
+  {
+   "description": "API secret paired with the key above. Stored encrypted.",
+   "fieldname": "service_secret",
+   "fieldtype": "Password",
+   "label": "Service Secret"
   }
  ],
  "links": [],
