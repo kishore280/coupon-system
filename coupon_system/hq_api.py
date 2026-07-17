@@ -104,6 +104,7 @@ def get_my_stores():
 	for job, result in zip(jobs, results):
 		entry = {
 			"store": job["store"],
+			"store_name": job["store_name"],
 			"site_url": job["site_url"],
 		}
 		if result.get("ok"):
