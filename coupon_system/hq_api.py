@@ -7,13 +7,15 @@ straight back to the app.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import frappe
-import requests
 from frappe import _
+from frappe.utils import get_request_session
 
 _ISSUE_PATH = "/api/method/ghost.api.auth.issue_user_token"
-_TIMEOUT = 12
+_TIMEOUT = 10
+_MAX_RETRIES = 2
 
 
 @frappe.whitelist()
@@ -61,9 +63,13 @@ def get_my_stores():
 	if not jobs:
 		return {"stores": []}
 
+	# One retrying session (thread-safe) shared across the workers — auto-retries
+	# transient failures (connection errors / HTTP 500) before giving up.
+	session = get_request_session(max_retries=_MAX_RETRIES)
+
 	# Fan out to all stores in parallel — one slow store can't hold up the rest.
 	with ThreadPoolExecutor(max_workers=min(10, len(jobs))) as pool:
-		results = list(pool.map(_broker_token, jobs))
+		results = list(pool.map(partial(_broker_token, session=session), jobs))
 
 	stores = []
 	for job, result in zip(jobs, results):
@@ -99,7 +105,7 @@ def get_my_stores():
 	return {"stores": stores}
 
 
-def _broker_token(job):
+def _broker_token(job, session):
 	"""HTTP-only. Runs in a worker thread — must NOT call frappe/DB.
 
 	Returns {"ok": True, "tokens": {...}} or {"ok": False, "error": "<reason>"};
@@ -110,7 +116,7 @@ def _broker_token(job):
 	url = job["site_url"] + _ISSUE_PATH
 	headers = {"Authorization": f"token {job['api_key']}:{job['secret']}"}
 	try:
-		resp = requests.post(
+		resp = session.post(
 			url,
 			headers=headers,
 			json={"user": job["user"], "mobile_no": job["mobile_no"]},
