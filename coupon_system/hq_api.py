@@ -34,7 +34,9 @@ _IMAGE_FIELDS = ("custom_kyc_pan_image", "custom_kyc_aadhaar_image")
 # What NOT to forward when cloning the HQ Sales Partner. Everything else is
 # copied verbatim — an exact copy, not an allow-list. We drop only:
 #   - Frappe's own managed columns (framework constants, not guessed),
-#   - the approval state the branch resets to pending on apply,
+#   - workflow_state + custom_kyc_status — the store's own review state. enroll
+#     puts custom_kyc_status back as "Submitted" (HQ's is "Approved", which would
+#     skip the store's review); workflow_state the branch sets to Pending,
 #   - the KYC images (moved as file bytes, not their HQ URLs).
 _SKIP_FIELDS = (
 	frozenset(default_fields)
@@ -239,6 +241,9 @@ def enroll(store):
 	master = frappe.get_doc("Sales Partner", hq_partner)
 
 	fields = _master_payload(master)
+	# Ship the KYC in for the store to review — the docs are cloned below, so it's
+	# Submitted, not HQ's Approved (which would skip the store's own review).
+	fields["custom_kyc_status"] = "Submitted"
 
 	session = get_request_session(max_retries=_MAX_RETRIES)
 	site_url = (store_doc.site_url or "").rstrip("/")
