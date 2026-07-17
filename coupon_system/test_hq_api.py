@@ -50,7 +50,6 @@ class TestGetMyStores(unittest.TestCase):
 			link = frappe.new_doc("Partner Store Link")
 			link.user = self.user
 			link.store = self.site_url
-			link.sales_partner = "SP-1"
 			link.status = "Active"
 			link.insert(ignore_permissions=True)
 
@@ -77,7 +76,6 @@ class TestGetMyStores(unittest.TestCase):
 		stores = out["stores"]
 		self.assertEqual(len(stores), 1)
 		self.assertEqual(stores[0]["store"], self.site_url)
-		self.assertEqual(stores[0]["sales_partner"], "SP-1")
 		self.assertEqual(stores[0]["access_token"], "a1")
 
 		# HQ must call the store's issue_user_token with ITS service key, for this

@@ -4,6 +4,11 @@ HQ never stores user tokens. For each store the logged-in user partners in, it
 asks that store to mint a token (ghost.api.auth.issue_user_token) using the
 service credentials on the store's Coupon Store row, and passes the tokens
 straight back to the app.
+
+HQ also carries no Sales Partner id: the store already knows who the user is
+from the brokered token, so the app resolves the partner from the user's email
+on each store (the same way the single-store app always did). Storing it here
+would just be a denormalized copy that drifts out of sync.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +42,7 @@ def get_my_stores():
 	links = frappe.get_all(
 		"Partner Store Link",
 		filters={"user": user, "status": "Active"},
-		fields=["store", "sales_partner"],
+		fields=["store"],
 	)
 
 	# Gather everything that needs DB access here, on the main thread. The worker
@@ -52,7 +57,6 @@ def get_my_stores():
 			{
 				"store": store.name,
 				"site_url": (store.site_url or "").rstrip("/"),
-				"sales_partner": link.sales_partner,
 				"api_key": store.service_api_key,
 				"secret": secret,
 				"user": user,
@@ -76,7 +80,6 @@ def get_my_stores():
 		entry = {
 			"store": job["store"],
 			"site_url": job["site_url"],
-			"sales_partner": job["sales_partner"],
 		}
 		if result.get("ok"):
 			tok = result["tokens"]

@@ -7,7 +7,6 @@
  "field_order": [
   "user",
   "store",
-  "sales_partner",
   "status",
   "enrolled_on"
  ],
@@ -31,13 +30,6 @@
    "options": "Coupon Store",
    "reqd": 1,
    "search_index": 1
-  },
-  {
-   "description": "The Sales Partner name on that store's own site (e.g. SP-0007).",
-   "fieldname": "sales_partner",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Sales Partner (local id on store)"
   },
   {
    "default": "Active",
