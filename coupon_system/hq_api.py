@@ -182,30 +182,30 @@ def get_available_stores():
 			"Partner Store Link", filters={"user": user}, fields=["store"]
 		)
 	}
+	# Broker-readiness is a query filter, not a post-loop: both credentials are
+	# real columns on the row. A Password field keeps a dummy "*****" in its
+	# column when set (the secret itself lives in __Auth), so `is set` correctly
+	# tells configured from empty — no per-store get_doc needed.
 	stores = frappe.get_all(
 		"Coupon Store",
-		filters={"is_active": 1},
+		filters={
+			"is_active": 1,
+			"service_api_key": ["is", "set"],
+			"service_secret": ["is", "set"],
+		},
 		fields=["name", "store_name", "site_url"],
 	)
-
-	available = []
-	for s in stores:
-		if s.name in linked:
-			continue
-		doc = frappe.get_doc("Coupon Store", s.name)
-		# Same credential check the broker makes — no key/secret, no token.
-		if not doc.service_api_key or not doc.get_password(
-			"service_secret", raise_exception=False
-		):
-			continue
-		available.append(
+	return {
+		"stores": [
 			{
 				"store": s.name,
 				"store_name": s.store_name,
 				"site_url": (s.site_url or "").rstrip("/"),
 			}
-		)
-	return {"stores": available}
+			for s in stores
+			if s.name not in linked
+		]
+	}
 
 
 @frappe.whitelist()
