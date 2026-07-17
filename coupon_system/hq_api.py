@@ -25,6 +25,13 @@ def get_my_stores():
 	if not user or user == "Guest":
 		frappe.throw(_("Login required"), frappe.AuthenticationError)
 
+	# Phone-first: a user with no mobile number must not be brokered onto any
+	# store (a phoneless account must never be provisioned). Stop here, at HQ,
+	# before touching any store.
+	mobile_no = frappe.db.get_value("User", user, "mobile_no")
+	if not mobile_no:
+		frappe.throw(_("Add your mobile number to access your stores."))
+
 	links = frappe.get_all(
 		"Partner Store Link",
 		filters={"user": user, "status": "Active"},
@@ -47,6 +54,7 @@ def get_my_stores():
 				"api_key": store.service_api_key,
 				"secret": secret,
 				"user": user,
+				"mobile_no": mobile_no,
 			}
 		)
 
@@ -55,16 +63,17 @@ def get_my_stores():
 
 	# Fan out to all stores in parallel — one slow store can't hold up the rest.
 	with ThreadPoolExecutor(max_workers=min(10, len(jobs))) as pool:
-		tokens = list(pool.map(_broker_token, jobs))
+		results = list(pool.map(_broker_token, jobs))
 
 	stores = []
-	for job, tok in zip(jobs, tokens):
+	for job, result in zip(jobs, results):
 		entry = {
 			"store": job["store"],
 			"site_url": job["site_url"],
 			"sales_partner": job["sales_partner"],
 		}
-		if tok:
+		if result.get("ok"):
+			tok = result["tokens"]
 			entry.update(
 				{
 					"access_token": tok.get("access_token"),
@@ -75,9 +84,15 @@ def get_my_stores():
 			)
 		else:
 			entry["error"] = "unavailable"
+			# Log the real reason neatly to the Error Log doctype (workers don't
+			# touch the DB, so we log here on the main thread).
 			frappe.log_error(
-				title="HQ broker: issue_user_token failed",
-				message=f"store={job['store']} user={user}",
+				title=f"HQ broker failed: {job['store']}"[:140],
+				message=(
+					f"User: {user}\n"
+					f"Store: {job['store']} ({job['site_url']})\n"
+					f"Reason: {result.get('error')}"
+				),
 			)
 		stores.append(entry)
 
@@ -85,15 +100,27 @@ def get_my_stores():
 
 
 def _broker_token(job):
-	"""HTTP-only. Runs in a worker thread — must NOT call frappe/DB."""
+	"""HTTP-only. Runs in a worker thread — must NOT call frappe/DB.
+
+	Returns {"ok": True, "tokens": {...}} or {"ok": False, "error": "<reason>"};
+	the main thread logs the reason to the Error Log.
+	"""
 	if not job["api_key"] or not job["secret"]:
-		return None
+		return {"ok": False, "error": "missing service credentials on Coupon Store"}
 	url = job["site_url"] + _ISSUE_PATH
 	headers = {"Authorization": f"token {job['api_key']}:{job['secret']}"}
 	try:
-		resp = requests.post(url, headers=headers, json={"user": job["user"]}, timeout=_TIMEOUT)
+		resp = requests.post(
+			url,
+			headers=headers,
+			json={"user": job["user"], "mobile_no": job["mobile_no"]},
+			timeout=_TIMEOUT,
+		)
 		if resp.status_code != 200:
-			return None
-		return resp.json().get("message") or None
-	except Exception:
-		return None
+			return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+		tokens = resp.json().get("message")
+		if not tokens:
+			return {"ok": False, "error": "no token in store response"}
+		return {"ok": True, "tokens": tokens}
+	except Exception as exc:
+		return {"ok": False, "error": str(exc)[:200]}
