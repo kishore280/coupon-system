@@ -12,4 +12,6 @@ class CouponStore(Document):
 		store_name: DF.Data
 		site_url: DF.Data
 		is_active: DF.Check
+		service_api_key: DF.Data | None
+		service_secret: DF.Password | None
 	# end: auto-generated types
