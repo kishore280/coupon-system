@@ -11,6 +11,8 @@ on each store (the same way the single-store app always did). Storing it here
 would just be a denormalized copy that drifts out of sync.
 """
 
+import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
@@ -20,11 +22,10 @@ from frappe.model import child_table_fields, default_fields, optional_fields
 from frappe.utils import get_request_session, now
 
 _ISSUE_PATH = "/api/method/ghost.api.auth.issue_user_token"
-_APPLY_PATH = (
+_PROVISION_PATH = (
 	"/api/method/oxifix_multisite_sync.api.sales_partner_application"
-	".apply_sales_partner"
+	".provision_partner"
 )
-_UPLOAD_PATH = "/api/method/upload_file"
 _TIMEOUT = 10
 _MAX_RETRIES = 2
 
@@ -243,15 +244,13 @@ def enroll(store):
 	master = frappe.get_doc("Sales Partner", hq_partner)
 
 	fields = _master_payload(master)
-	# Ship the KYC in for the store to review — the docs are cloned below, so it's
-	# Submitted, not HQ's Approved (which would skip the store's own review).
-	fields["custom_kyc_status"] = "Submitted"
 
 	session = get_request_session(max_retries=_MAX_RETRIES)
 	site_url = (store_doc.site_url or "").rstrip("/")
 
 	# Same broker the fan-out uses — mint a token so we act AS the user on the
-	# branch (its apply endpoint resolves the applicant from the session).
+	# branch (provision_partner resolves the applicant, and owns every doc, from
+	# the session user).
 	result = _broker_token(
 		{
 			"api_key": store_doc.service_api_key,
@@ -266,19 +265,14 @@ def enroll(store):
 	if not token:
 		_fail("issue_user_token", store, result.get("error", "no token"))
 
-	# Create the branch Sales Partner in submitted/pending state via the branch's
-	# own apply endpoint — the store approves or rejects it like any application.
-	branch_partner = _branch_apply(session, site_url, token, fields)
+	# ONE call: the branch creates the Sales Partner + attaches both KYC images +
+	# sets Submitted, in its own local transaction. Atomicity lives where the data
+	# lives — there's no cross-server transaction to fake. A failure rolls the
+	# branch's transaction back (nothing half-provisioned) and throws before we
+	# write the link below, so HQ records nothing and retry starts clean.
+	_branch_provision(session, site_url, token, fields, master)
 
-	# Move the KYC images — every one must land. Any failure throws HERE, before
-	# the link is written, so the enrollment is all-or-nothing: HQ records
-	# nothing, the store never appears half-provisioned, and retry starts clean.
-	for field in _IMAGE_FIELDS:
-		file_url = master.get(field)
-		if file_url:
-			_clone_file(session, site_url, token, branch_partner, field, file_url)
-
-	# Everything landed → record the access link (Active) so get_my_stores brokers
+	# The clone landed → record the access link (Active) so get_my_stores brokers
 	# a token and the app shows the store as pending → approved. Reapply (link
 	# already exists) keeps the same link.
 	if not existing:
@@ -330,52 +324,44 @@ def _master_payload(master):
 	}
 
 
-def _branch_apply(session, site_url, token, fields):
-	"""Submit the cloned Sales Partner on the branch; return its docname."""
+def _branch_provision(session, site_url, token, fields, master):
+	"""One call: hand the branch the cloned fields + both KYC images (base64) so
+	it provisions the Sales Partner atomically, as the brokered user."""
+	payload = {"fields": json.dumps(fields)}
+	for arg, field in (
+		("pan_image", "custom_kyc_pan_image"),
+		("aadhaar_image", "custom_kyc_aadhaar_image"),
+	):
+		image = _hq_image(master.get(field))
+		if image:
+			payload[arg] = json.dumps(image)
+
 	resp = session.post(
-		site_url + _APPLY_PATH,
+		site_url + _PROVISION_PATH,
 		headers={"Authorization": f"Bearer {token}"},
-		json=fields,
+		data=payload,
 		timeout=_TIMEOUT,
 	)
 	if resp.status_code != 200:
-		_fail("apply_sales_partner", site_url, f"HTTP {resp.status_code}: {resp.text[:500]}")
-	msg = (resp.json() or {}).get("message") or {}
-	partner = msg.get("partner") or msg.get("name")
-	if not partner:
-		frappe.throw(_("The store didn't confirm the application. Try again."))
-	return partner
+		_fail("provision_partner", site_url, f"HTTP {resp.status_code}: {resp.text[:500]}")
+	if not ((resp.json() or {}).get("message") or {}).get("partner"):
+		frappe.throw(_("The store didn't confirm enrollment. Please try again."))
 
 
-def _clone_file(session, site_url, token, docname, fieldname, file_url):
-	"""Move one HQ private file onto the branch and attach it to `fieldname`."""
-	blob = _hq_file_bytes(file_url)
-	if not blob:
-		return
-	filename, content = blob
-	resp = session.post(
-		site_url + _UPLOAD_PATH,
-		headers={"Authorization": f"Bearer {token}"},
-		files={"file": (filename, content)},
-		data={
-			"doctype": "Sales Partner",
-			"docname": docname,
-			"fieldname": fieldname,
-			"is_private": 1,
-		},
-		timeout=_TIMEOUT,
-	)
-	if resp.status_code != 200:
-		_fail(f"upload {fieldname}", site_url, f"HTTP {resp.status_code}: {resp.text[:500]}")
-
-
-def _hq_file_bytes(file_url):
-	"""(filename, bytes) for an HQ file_url, or None if the file is missing."""
+def _hq_image(file_url):
+	"""{"filename", "content"(base64)} for an HQ private file_url, or None."""
+	if not file_url:
+		return None
 	name = frappe.db.get_value("File", {"file_url": file_url}, "name")
 	if not name:
 		return None
-	doc = frappe.get_doc("File", name)
-	return (doc.file_name or "kyc"), doc.get_content()
+	content = frappe.get_doc("File", name).get_content()
+	if isinstance(content, str):
+		content = content.encode()
+	return {
+		"filename": frappe.db.get_value("File", name, "file_name") or "kyc.jpg",
+		"content": base64.b64encode(content).decode(),
+	}
 
 
 def _fail(what, where, detail):
