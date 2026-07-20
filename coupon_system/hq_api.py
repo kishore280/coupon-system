@@ -21,6 +21,41 @@ from frappe import _
 from frappe.model import child_table_fields, default_fields, optional_fields
 from frappe.utils import get_request_session, now
 
+from coupon_system.coupon_system.doctype.blocked_partner.blocked_partner import (
+	is_blocked,
+)
+
+# Machine-readable code the app switches on for a suspended account. Stable —
+# never gate the app on the human message text (it changes / gets translated).
+_BLOCKED_CODE = "account_suspended"
+
+
+def _blocked_payload(user):
+	"""If `user` is blocked, the response body the two list endpoints return
+	verbatim; otherwise None. Additive: old app clients ignore the extra keys and
+	still see an empty `stores`, updated clients read `code` and show the
+	suspended screen. `blocked_by` lists the blocking store names ("HQ" for an
+	HQ-level block) so the app can tell the user who blocked them.
+	"""
+	stores = is_blocked(user)
+	if not stores:
+		return None
+	# `stores` holds Coupon Store docnames (or None for an HQ block). Resolve each
+	# to its display store_name so the app shows "Blocked by: Goa Store", never a
+	# raw docname/id. An empty store name falls back to the docname.
+	names = []
+	for store in stores:
+		if not store:
+			names.append("HQ")
+			continue
+		names.append(frappe.db.get_value("Coupon Store", store, "store_name") or store)
+	return {
+		"blocked": True,
+		"code": _BLOCKED_CODE,
+		"blocked_by": names,
+		"stores": [],
+	}
+
 _ISSUE_PATH = "/api/method/ghost.api.auth.issue_user_token"
 _PROVISION_PATH = (
 	"/api/method/oxifix_multisite_sync.api.sales_partner_application"
@@ -63,6 +98,13 @@ def get_my_stores():
 	mobile_no = frappe.db.get_value("User", user, "mobile_no")
 	if not mobile_no:
 		frappe.throw(_("Add your mobile number to access your stores."))
+
+	# A blocked partner is fully out — no stores, no brokered tokens — regardless
+	# of how many stores they're enrolled in. Enrollments (Partner Store Link)
+	# are left untouched, so lifting the block restores them exactly as before.
+	blocked = _blocked_payload(user)
+	if blocked:
+		return blocked
 
 	links = frappe.get_all(
 		"Partner Store Link",
@@ -181,6 +223,11 @@ def get_available_stores():
 	"""
 	user = _require_user()
 
+	# Blocked partners see no "apply" list either — same gate as get_my_stores.
+	blocked = _blocked_payload(user)
+	if blocked:
+		return blocked
+
 	linked = {
 		link.store
 		for link in frappe.get_all(
@@ -219,6 +266,15 @@ def enroll(store):
 	onto the store as a pending application, then record the access link.
 	"""
 	user = _require_user()
+
+	# A blocked partner cannot enroll anywhere. This is an action, not a fetch —
+	# throw a 403 (PermissionError) carrying the same stable code the list
+	# endpoints return, so the app handles both the same way.
+	if is_blocked(user):
+		frappe.throw(
+			_("Your account has been suspended. Please contact support."),
+			frappe.PermissionError,
+		)
 
 	mobile_no = frappe.db.get_value("User", user, "mobile_no")
 	if not mobile_no:
