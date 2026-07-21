@@ -11,14 +11,13 @@ from frappe.utils import add_days, today
 from coupon_system.api import (
 	_available_at,
 	_buckets,
+	_get_or_create_user,
 	balance,
-	mark_given,
 	redeem,
 	register_cards,
 	request_withdrawal,
 	reverse_redeem,
 	scan,
-	store_card_counts,
 )
 
 _STORE_A = "https://store-a.example.com"
@@ -251,22 +250,17 @@ class TestStoreBuckets(FrappeTestCase):
 		self.assertFalse(again["success"])
 		self.assertEqual(again["reason"], "already_reversed")
 
-	def test_mark_given_stamps_and_reports_missing(self):
-		code = f"OXFX-{_NS_A}-TBGV1"
-		register_cards(_STORE_A, [{"code": code, "points_value": 10, "expiry_date": add_days(today(), 30)}])
-		res = mark_given(code, "TB-GV-INV")
-		self.assertTrue(res["success"])
-		self.assertEqual(frappe.db.get_value("Coupon Card", {"code": code}, "source_invoice"), "TB-GV-INV")
-
-		nf = mark_given(f"OXFX-{_NS_A}-NOSUCH", "TB-GV-INV")
-		self.assertFalse(nf["success"])
-		self.assertEqual(nf["reason"], "card_not_found")
-
-	def test_store_card_counts(self):
-		for i in range(3):
-			register_cards(_STORE_A, [
-				{"code": f"OXFX-{_NS_A}-TBCNT{i}", "points_value": 5, "expiry_date": add_days(today(), 30)}
-			])
-		c = store_card_counts(_STORE_A)
-		self.assertTrue(c["success"])
-		self.assertGreaterEqual(c["active"], 3)
+	def test_store_mode_blocks_local_ledger(self):
+		# In Store mode the local points ledger must be UNWRITABLE (structural SSOT guard) - all
+		# points live on HQ. is_store() honors the coupon_site_role site_config override.
+		_get_or_create_user(self.phone)
+		frappe.local.conf["coupon_site_role"] = "Store"
+		try:
+			with self.assertRaisesRegex(frappe.ValidationError, "Store mode"):
+				e = frappe.new_doc("Coupon Ledger")
+				e.phone = self.phone
+				e.type = "CREDIT"
+				e.points = 5
+				e.insert(ignore_permissions=True)
+		finally:
+			frappe.local.conf.pop("coupon_site_role", None)

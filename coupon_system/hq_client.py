@@ -29,13 +29,13 @@ def is_store():
 def _conf():
 	# Reuse the sync app's HQ connection (the SAME creds the branch redemption already uses)
 	# rather than a second, drift-prone config. This store's identity on HQ is its own URL.
+	if not frappe.db.exists("DocType", "HQ Integration Settings"):
+		frappe.throw(_("Store mode requires the oxifix_multisite_sync app "
+					   "(HQ Integration Settings) installed on this site."))
 	s = frappe.get_cached_doc("HQ Integration Settings")
 	base = (s.hq_url or "").rstrip("/")
 	key = s.api_key
-	try:
-		secret = s.get_password("api_secret")
-	except Exception:
-		secret = s.get("api_secret")
+	secret = s.api_secret  # a Data field on HQ Integration Settings - read plainly, as the sync does
 	store_id = get_url()
 	if not (base and key and secret):
 		frappe.throw(_("HQ Integration Settings not configured (need hq_url, api_key, api_secret)"))
@@ -70,14 +70,6 @@ def call_hq(method, **params):
 
 def hq_register_cards(cards):
 	return call_hq("register_cards", store=store_id(), cards=json.dumps(cards))
-
-
-def hq_mark_given(code, invoice_no):
-	return call_hq("mark_given", code=code, invoice_no=invoice_no)
-
-
-def hq_stock():
-	return call_hq("store_card_counts", store=store_id())
 
 
 @frappe.whitelist()
