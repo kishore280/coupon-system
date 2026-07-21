@@ -20,8 +20,8 @@ def on_sales_invoice_submit(doc, method=None):
 	points = cint(doc.get("custom_coupon_redeem_points"))
 	if phone and points > 0:
 		res = hq_redeem(phone, points, doc.name)
-		# A submit RETRY hits idempotency ("already redeemed") - that's success, not failure.
-		if not res.get("success") and "already redeemed" not in (res.get("error") or "").lower():
+		# A submit RETRY hits idempotency - matched on a stable machine `reason`, not text.
+		if not res.get("success") and res.get("reason") != "already_redeemed":
 			frappe.log_error(str(res), "coupon store redeem failed")
 			frappe.throw(_("Coupon redemption failed at HQ: {0}").format(res.get("error") or "unknown"))
 
@@ -45,8 +45,7 @@ def on_sales_invoice_cancel(doc, method=None):
 		return
 
 	res = hq_reverse(doc.name)
-	# Nothing-to-reverse or already-reversed must NEVER block the cancellation.
-	err = (res.get("error") or "").lower()
-	if not res.get("success") and "no redemption" not in err and "already processed" not in err:
+	# Nothing-to-reverse / already-reversed must NEVER block the cancellation.
+	if not res.get("success") and res.get("reason") not in ("no_redemption", "already_reversed"):
 		frappe.log_error(str(res), "coupon store reverse failed")
 		frappe.throw(_("Coupon reversal failed at HQ: {0}").format(res.get("error") or "unknown"))

@@ -365,7 +365,10 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			frappe.throw(_("Redemption amount must be greater than 0"))
 
 		if frappe.db.exists("Coupon Ledger", {"invoice_no": invoice_no, "site_url": site_url, "type": "DEBIT"}):
-			frappe.throw(_("Already redeemed for this invoice"))
+			# Stable machine `reason` so callers can detect idempotent replay without matching
+			# on (translatable) error text.
+			return {"success": False, "reason": "already_redeemed",
+					"error": _("Already redeemed for this invoice")}
 
 		if code:
 			# Legacy path (ADR-0002 D3, left intact): redeem a physical card directly at a store.
@@ -457,7 +460,8 @@ def reverse_redeem(invoice_no, site_url):
 			fields=["phone", "points", "bucket_store"],
 		)
 		if not debits:
-			frappe.throw(_("No redemption found for this invoice"))
+			return {"success": False, "reason": "no_redemption",
+					"error": _("No redemption found for this invoice")}
 
 		# Idempotency: a CREDIT tagged with this invoice means a reversal already ran.
 		if frappe.db.exists("Coupon Ledger", {
@@ -465,7 +469,8 @@ def reverse_redeem(invoice_no, site_url):
 			"site_url": site_url,
 			"type": "CREDIT",
 		}):
-			frappe.throw(_("Reversal already processed for this invoice"))
+			return {"success": False, "reason": "already_reversed",
+					"error": _("Reversal already processed for this invoice")}
 
 		phone = debits[0].phone
 		restored = 0
@@ -718,17 +723,22 @@ def _unique_codes(quantity, seen=None, code_prefix=None):
 	return result
 
 
-def _generate_batch(quantity, item_code, points_value, expiry_date,
-					naming_series, batch_no, work_order, source_stock_entry="",
-					campaign="", status="Active", origin="Central", store="", source_invoice=""):
-	# Store coupons carry a store-namespaced prefix so independent minting never collides.
+def _store_prefix(store=""):
+	"""Code prefix for a batch: brand prefix, plus a store's code_namespace for store coupons
+	(so independent minting across stores never collides)."""
 	prefix = _code_prefix()
-	if origin == "Store" and store:
+	if store:
 		ns = frappe.db.get_value("Coupon Store", store, "code_namespace")
 		if ns:
 			prefix = f"{prefix}-{ns}" if prefix else ns
-	codes = _unique_codes(quantity, code_prefix=prefix)
+	return prefix
 
+
+def _insert_cards(codes, item_code, points_value, expiry_date, naming_series, batch_no,
+				  work_order, source_stock_entry="", campaign="", status="Active",
+				  origin="Central", store="", source_invoice=""):
+	"""bulk_insert Coupon Card rows for pre-generated `codes`. Pure DB write - no code
+	generation, no network - so it can run right after (not across) an external call."""
 	now = now_datetime()
 	user = frappe.session.user
 	fields = [
@@ -746,6 +756,14 @@ def _generate_batch(quantity, item_code, points_value, expiry_date,
 	]
 	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)
 	return {"success": True, "count": len(codes), "codes": codes}
+
+
+def _generate_batch(quantity, item_code, points_value, expiry_date,
+					naming_series, batch_no, work_order, source_stock_entry="",
+					campaign="", status="Active", origin="Central", store="", source_invoice=""):
+	codes = _unique_codes(quantity, code_prefix=_store_prefix(store if origin == "Store" else ""))
+	return _insert_cards(codes, item_code, points_value, expiry_date, naming_series, batch_no,
+						 work_order, source_stock_entry, campaign, status, origin, store, source_invoice)
 
 
 @frappe.whitelist()
@@ -827,39 +845,48 @@ def register_cards(store, cards):
 def mark_given(code, invoice_no):
 	"""Traceability: record that a store coupon was handed out with a Sales Invoice by
 	stamping source_invoice on the card. Idempotent - re-stamping is a no-op."""
-	roles = frappe.get_roles()
-	if "System Manager" not in roles and "Coupon Manager" not in roles:
-		frappe.throw(_("Not permitted"))
-	name = frappe.db.get_value("Coupon Card", {"code": code}, "name")
-	if not name:
-		frappe.throw(_("Card not found"))
-	frappe.db.set_value("Coupon Card", name, "source_invoice", invoice_no)
-	return {"success": True, "code": code, "source_invoice": invoice_no}
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+		card = frappe.db.get_value("Coupon Card", {"code": code}, ["name", "origin"], as_dict=True)
+		if not card:
+			return {"success": False, "reason": "card_not_found", "error": _("Card not found")}
+		if card.origin != "Store":
+			return {"success": False, "reason": "not_a_store_coupon",
+					"error": _("Only store coupons carry a give record")}
+		frappe.db.set_value("Coupon Card", card.name, "source_invoice", invoice_no)
+		return {"success": True, "code": code, "source_invoice": invoice_no}
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}
 
 
 @frappe.whitelist()
 def store_card_counts(store):
 	"""Lifecycle counts for a store's registered coupons, so a store can see its own stock
 	(HQ is the source of truth for used/unused - the store's local card status is cosmetic)."""
-	roles = frappe.get_roles()
-	if "System Manager" not in roles and "Coupon Manager" not in roles:
-		frappe.throw(_("Not permitted"))
-	CC = frappe.qb.DocType("Coupon Card")
-	rows = (
-		frappe.qb.from_(CC)
-		.select(CC.status, frappe.qb.functions("COUNT", CC.name).as_("n"))
-		.where((CC.origin == "Store") & (CC.store == store))
-		.groupby(CC.status)
-		.run(as_dict=True)
-	)
-	counts = {r.status: cint(r.n) for r in rows}
-	return {
-		"success": True,
-		"store": store,
-		"active": counts.get("Active", 0),
-		"redeemed": counts.get("Redeemed", 0),
-		"expired": counts.get("Expired", 0),
-		"retired": counts.get("Retired", 0),
-		"void": counts.get("Void", 0),
-		"total": sum(counts.values()),
-	}
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+		CC = frappe.qb.DocType("Coupon Card")
+		rows = (
+			frappe.qb.from_(CC)
+			.select(CC.status, frappe.qb.functions("COUNT", CC.name).as_("n"))
+			.where((CC.origin == "Store") & (CC.store == store))
+			.groupby(CC.status)
+			.run(as_dict=True)
+		)
+		counts = {r.status: cint(r.n) for r in rows}
+		return {
+			"success": True,
+			"store": store,
+			"active": counts.get("Active", 0),
+			"redeemed": counts.get("Redeemed", 0),
+			"expired": counts.get("Expired", 0),
+			"retired": counts.get("Retired", 0),
+			"void": counts.get("Void", 0),
+			"total": sum(counts.values()),
+		}
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}

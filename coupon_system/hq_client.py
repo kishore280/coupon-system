@@ -15,7 +15,15 @@ _TIMEOUT = 15
 
 
 def is_store():
-	return (frappe.db.get_single_value("Coupon System Settings", "site_role") or "HQ") == "Store"
+	# A site_config override (`coupon_site_role`) lets an admin declare Store mode BEFORE the app
+	# is installed, so after_install skips HQ-only seeding (default campaigns, mobile user).
+	# Falls back to the setting once the doctype exists.
+	role = (
+		frappe.conf.get("coupon_site_role")
+		or frappe.db.get_single_value("Coupon System Settings", "site_role")
+		or "HQ"
+	)
+	return role == "Store"
 
 
 def _conf():
@@ -77,34 +85,38 @@ def hq_stock():
 
 @frappe.whitelist()
 def store_mint(quantity, campaign):
-	"""Mint coupons locally (this store's immutable defs, namespaced code) and register the
-	definitions to HQ so a scan resolves there. Store mode only."""
-	from coupon_system.api import _campaign_snapshot, _generate_batch
+	"""Mint coupons for this store: generate namespaced codes, register the immutable defs to
+	HQ, then write the store's local copy and commit. Store mode only.
+
+	Order matters. Codes are generated first (read-only), HQ is called with NO local write
+	transaction open (so no row lock is held across the network round-trip), and only on HQ
+	success are the local rows written + committed - so a store never hands out a coupon HQ
+	doesn't know about.
+	"""
+	from coupon_system.api import _campaign_snapshot, _insert_cards, _store_prefix, _unique_codes
 
 	if not is_store():
 		frappe.throw(_("store_mint runs only on a Store-mode site"))
 
 	sid = store_id()
-	# Guard: the local Coupon Store + namespace must exist, or _generate_batch would emit
-	# UN-namespaced codes (collision risk) and a dangling card.store link.
+	# Guard: the local Coupon Store + namespace must exist, or codes would be UN-namespaced
+	# (collision risk) and card.store would dangle.
 	ns = frappe.db.get_value("Coupon Store", sid, "code_namespace")
 	if not ns:
 		frappe.throw(_("Local Coupon Store {0} with a code_namespace must exist before minting").format(sid))
 
 	pts, expiry = _campaign_snapshot(campaign)
-	# Deliberate order: write local rows (uncommitted) -> register to HQ -> commit. So a store
-	# never hands out a coupon HQ doesn't know about; if HQ fails, the local rows roll back.
-	res = _generate_batch(
-		int(quantity), "", pts, expiry, "CC-.YYYY.-.#####", "", "",
-		campaign=campaign, origin="Store", store=sid,
-	)
-	cards = [{"code": c, "points_value": pts, "expiry_date": str(expiry)} for c in res["codes"]]
+	codes = _unique_codes(int(quantity), code_prefix=_store_prefix(sid))
+	cards = [{"code": c, "points_value": pts, "expiry_date": str(expiry)} for c in codes]
 
 	reg = hq_register_cards(cards)
 	if not reg.get("success"):
 		frappe.throw(_("HQ registration failed: {0}").format(reg.get("error") or "unknown"))
+
+	_insert_cards(codes, "", pts, expiry, "CC-.YYYY.-.#####", "", "",
+				  campaign=campaign, origin="Store", store=sid)
 	frappe.db.commit()
-	return {"success": True, "codes": res["codes"], "registered_to": sid}
+	return {"success": True, "codes": codes, "registered_to": sid}
 
 
 @frappe.whitelist()

@@ -12,11 +12,13 @@ from coupon_system.api import (
 	_available_at,
 	_buckets,
 	balance,
+	mark_given,
 	redeem,
 	register_cards,
 	request_withdrawal,
 	reverse_redeem,
 	scan,
+	store_card_counts,
 )
 
 _STORE_A = "https://store-a.example.com"
@@ -81,6 +83,7 @@ class TestStoreBuckets(FrappeTestCase):
 	@classmethod
 	def tearDownClass(cls):
 		frappe.db.delete("Coupon Card", {"code": ["like", "TB-%"]})
+		frappe.db.delete("Coupon Card", {"store": ["in", [_STORE_A, _STORE_B]]})
 		for name in (_STORE_A, _STORE_B):
 			if frappe.db.exists("Coupon Store", name):
 				frappe.delete_doc("Coupon Store", name, ignore_permissions=True, force=True)
@@ -227,3 +230,43 @@ class TestStoreBuckets(FrappeTestCase):
 		self.assertEqual(res["points_added"], 15)
 		self.assertEqual(res["locked_to_store"], _STORE_A)
 		self.assertEqual(_buckets(self.phone).get(_STORE_A), 15)
+
+	# --- stable machine reasons (so hooks never match on translatable text) ---
+	def test_redeem_reason_already_redeemed(self):
+		self.earn_store(_STORE_A, 20, tag="A")
+		self.assertTrue(redeem(self.phone, 5, _STORE_A, "TB-RE-1")["success"])
+		dup = redeem(self.phone, 5, _STORE_A, "TB-RE-1")
+		self.assertFalse(dup["success"])
+		self.assertEqual(dup["reason"], "already_redeemed")
+
+	def test_reverse_reason_codes(self):
+		none = reverse_redeem("TB-NOPE-1", _STORE_A)
+		self.assertFalse(none["success"])
+		self.assertEqual(none["reason"], "no_redemption")
+
+		self.earn_store(_STORE_A, 10, tag="A")
+		self.assertTrue(redeem(self.phone, 10, _STORE_A, "TB-RE-2")["success"])
+		self.assertTrue(reverse_redeem("TB-RE-2", _STORE_A)["success"])
+		again = reverse_redeem("TB-RE-2", _STORE_A)
+		self.assertFalse(again["success"])
+		self.assertEqual(again["reason"], "already_reversed")
+
+	def test_mark_given_stamps_and_reports_missing(self):
+		code = f"OXFX-{_NS_A}-TBGV1"
+		register_cards(_STORE_A, [{"code": code, "points_value": 10, "expiry_date": add_days(today(), 30)}])
+		res = mark_given(code, "TB-GV-INV")
+		self.assertTrue(res["success"])
+		self.assertEqual(frappe.db.get_value("Coupon Card", {"code": code}, "source_invoice"), "TB-GV-INV")
+
+		nf = mark_given(f"OXFX-{_NS_A}-NOSUCH", "TB-GV-INV")
+		self.assertFalse(nf["success"])
+		self.assertEqual(nf["reason"], "card_not_found")
+
+	def test_store_card_counts(self):
+		for i in range(3):
+			register_cards(_STORE_A, [
+				{"code": f"OXFX-{_NS_A}-TBCNT{i}", "points_value": 5, "expiry_date": add_days(today(), 30)}
+			])
+		c = store_card_counts(_STORE_A)
+		self.assertTrue(c["success"])
+		self.assertGreaterEqual(c["active"], 3)
