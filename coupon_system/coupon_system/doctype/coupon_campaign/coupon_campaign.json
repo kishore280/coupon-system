@@ -8,6 +8,7 @@
  "field_order": [
   "campaign_name",
   "audience",
+  "owned_by_store",
   "is_active",
   "column_break_1",
   "points",
@@ -35,6 +36,14 @@
    "options": "Customer Group",
    "in_list_view": 1,
    "description": "Who the coupon targets (Plumber, Painter, ...). Label only for now — does not gate redemption yet."
+  },
+  {
+   "fieldname": "owned_by_store",
+   "fieldtype": "Link",
+   "label": "Owned By Store",
+   "options": "Coupon Store",
+   "search_index": 1,
+   "description": "Blank = central campaign (points are general, spendable anywhere). Set = this store's campaign; points earned from its coupons LOCK to that store. Distinct from Allowed Stores (which gates the legacy card-redeem path)."
   },
   {
    "default": "1",

@@ -11,6 +11,7 @@
   "timestamp",
   "column_break_1",
   "site_url",
+  "bucket_store",
   "invoice_no",
   "description"
  ],
@@ -55,6 +56,14 @@
    "fieldtype": "Link",
    "label": "Site URL",
    "options": "Coupon Store"
+  },
+  {
+   "description": "Scope / account address of these points: blank = general (spendable anywhere); a store = locked to that store. The (phone, bucket_store) pair is the account.",
+   "fieldname": "bucket_store",
+   "fieldtype": "Link",
+   "label": "Bucket Store",
+   "options": "Coupon Store",
+   "search_index": 1
   },
   {
    "fieldname": "invoice_no",

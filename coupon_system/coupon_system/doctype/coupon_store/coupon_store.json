@@ -7,6 +7,7 @@
  "field_order": [
   "store_name",
   "site_url",
+  "code_namespace",
   "is_active",
   "section_break_broker",
   "service_api_key",
@@ -30,6 +31,13 @@
    "reqd": 1,
    "unique": 1,
    "search_index": 1
+  },
+  {
+   "description": "Allocated per-store code segment (e.g. S042). Prefixes this store's coupon codes so independent minting across stores never collides.",
+   "fieldname": "code_namespace",
+   "fieldtype": "Data",
+   "label": "Code Namespace",
+   "unique": 1
   },
   {
    "default": "1",

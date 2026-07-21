@@ -8,18 +8,45 @@ from frappe.query_builder.functions import Sum
 from frappe.utils import add_months, cint, flt, getdate, now_datetime, today
 
 
-def _get_balance(phone):
+def _buckets(phone):
+	"""Net points per bucket for a phone: {None: general, "<store>": locked, ...}.
+
+	The (phone, bucket_store) pair is the account address (ADR-0003). bucket_store is
+	blank for general points (central coupons, spendable anywhere) or a Coupon Store for
+	store-locked points. A CREDIT adds to its bucket; a DEBIT subtracts from it.
+	"""
 	CL = frappe.qb.DocType("Coupon Ledger")
 	rows = (
-		
 		frappe.qb.from_(CL)
-		.select(CL.type, Sum(CL.points).as_("total"))
+		.select(CL.bucket_store, CL.type, Sum(CL.points).as_("total"))
 		.where(CL.phone == phone)
-		.groupby(CL.type)
+		.groupby(CL.bucket_store, CL.type)
 		.run(as_dict=True)
 	)
-	totals = {r.type: cint(r.total) for r in rows}
-	return totals.get("CREDIT", 0) - totals.get("DEBIT", 0)
+	buckets = {}
+	for r in rows:
+		key = r.bucket_store or None
+		sign = 1 if r.type == "CREDIT" else -1
+		buckets[key] = buckets.get(key, 0) + sign * cint(r.total)
+	return buckets
+
+
+def _get_balance(phone):
+	"""Total wallet balance across every bucket - the number the app shows as the total."""
+	return sum(_buckets(phone).values())
+
+
+def _available_at(phone, store):
+	"""Points spendable at `store` = general + that store's locked bucket. Points locked
+	to OTHER stores are excluded (they're frozen away from their store)."""
+	buckets = _buckets(phone)
+	return buckets.get(None, 0) + (buckets.get(store, 0) if store else 0)
+
+
+def _withdrawable(phone):
+	"""Points eligible for cash-out. Launch scope: general points ONLY - store-locked
+	points are not withdrawable (store cash-out is deferred)."""
+	return _buckets(phone).get(None, 0)
 
 
 def _get_locked_withdrawal_points(phone):
@@ -33,23 +60,44 @@ def _get_locked_withdrawal_points(phone):
 
 
 def _get_available_balance(phone):
-	return _get_balance(phone) - _get_locked_withdrawal_points(phone)
+	"""Withdrawable balance = general points minus points already locked in Pending
+	withdrawal requests. Store-locked points are excluded (not withdrawable at launch)."""
+	return _withdrawable(phone) - _get_locked_withdrawal_points(phone)
 
 
-def _post_ledger(phone, entry_type, points, description, site_url=None, invoice_no=None):
-	"""The one place that writes a Coupon Ledger row. site_url/invoice_no are
-	optional store context, not a precondition of recording a CREDIT or DEBIT -
-	callers with no store (e.g. a withdrawal) simply omit them."""
+def _post_ledger(phone, entry_type, points, description, site_url=None, invoice_no=None,
+				 bucket_store=None):
+	"""The one place that writes a Coupon Ledger row. site_url = where the transaction
+	happened (redeem context); bucket_store = which account the points belong to (blank =
+	general, else a store). Both optional - a withdrawal or central earn simply omits them."""
 	entry = frappe.new_doc("Coupon Ledger")
 	entry.phone = phone
 	entry.type = entry_type
 	entry.points = points
 	entry.description = description
 	entry.site_url = site_url
+	entry.bucket_store = bucket_store
 	entry.invoice_no = invoice_no
 	entry.timestamp = now_datetime()
 	entry.insert(ignore_permissions=True)
 	return entry
+
+
+def _debit_buckets(phone, amount, store, invoice_no, description="Redeemed"):
+	"""Spend `amount` points at `store`, draining that store's locked bucket FIRST, then
+	general - so store-locked points never get stranded. Posts up to two DEBIT rows (one
+	per bucket touched) to keep the buckets exact and fully auditable; both carry the same
+	invoice_no and site_url = the redeeming store. Caller must already hold the user row
+	lock and have checked availability."""
+	buckets = _buckets(phone)
+	from_store = min(amount, max(buckets.get(store, 0), 0)) if store else 0
+	from_general = amount - from_store
+	if from_store > 0:
+		_post_ledger(phone, "DEBIT", from_store, description, site_url=store,
+					 invoice_no=invoice_no, bucket_store=store)
+	if from_general > 0:
+		_post_ledger(phone, "DEBIT", from_general, description, site_url=store,
+					 invoice_no=invoice_no, bucket_store=None)
 
 
 def _get_or_create_user(phone, full_name=None):
@@ -63,11 +111,15 @@ def _get_or_create_user(phone, full_name=None):
 
 
 def _resolve_card_points(card):
-	"""Resolve the LIVE point value of a card.
+	"""Resolve the point value of a card.
 
-	Campaign value if the card is linked to one (the dynamic dial); otherwise the
-	card's snapshot points_value as a fallback. Raises if the campaign is inactive.
+	Store coupons carry a value SNAPSHOT frozen at mint (gift-card model, ADR-0003 / D1):
+	their value is never re-resolved from a campaign, so editing a store campaign can't
+	revalue coupons already in customers' hands. Central cards resolve LIVE from their
+	campaign (the dynamic dial), falling back to the snapshot only if unlinked.
 	"""
+	if card.get("origin") == "Store":
+		return cint(card.get("points_value"))
 	if card.get("campaign"):
 		camp = frappe.db.get_value(
 			"Coupon Campaign", card.campaign, ["points", "is_active", "end_date"], as_dict=True
@@ -205,7 +257,9 @@ def scan(phone, code, full_name=None):
 			card.scanned_at = now_datetime()
 			card.save(ignore_permissions=True)
 
-			_post_ledger(phone, "CREDIT", points, f"Card {code} scanned")
+			# Store coupons lock their points to the issuing store; central coupons are general.
+			bucket = card.store if card.get("origin") == "Store" else None
+			_post_ledger(phone, "CREDIT", points, f"Card {code} scanned", bucket_store=bucket)
 		except Exception:
 			frappe.db.rollback(save_point="coupon_scan")
 			raise
@@ -213,6 +267,7 @@ def scan(phone, code, full_name=None):
 		return {
 			"success": True,
 			"points_added": points,
+			"locked_to_store": card.store if card.get("origin") == "Store" else None,
 			"new_balance": _get_balance(phone),
 		}
 	except frappe.ValidationError as e:
@@ -233,7 +288,6 @@ def balance(phone):
 
 		CL = frappe.qb.DocType("Coupon Ledger")
 
-		# Single GROUP BY for balance + totals
 		rows = (
 			frappe.qb.from_(CL)
 			.select(CL.type, Sum(CL.points).as_("total"))
@@ -244,31 +298,43 @@ def balance(phone):
 		totals = {r.type: cint(r.total) for r in rows}
 		total_earned = totals.get("CREDIT", 0)
 		total_redeemed = totals.get("DEBIT", 0)
-		points_balance = total_earned - total_redeemed
+
+		# Partition the wallet into buckets: general (spendable anywhere) + one entry per
+		# store the customer holds locked points at. The app shows the total + this breakdown.
+		buckets = _buckets(phone)
+		general = buckets.get(None, 0)
+		restricted = [
+			{
+				"store": store,
+				"store_name": frappe.db.get_value("Coupon Store", store, "store_name") or store,
+				"points": pts,
+			}
+			for store, pts in buckets.items()
+			if store is not None and pts > 0
+		]
 
 		ledger_entries = (
 			frappe.qb.from_(CL)
-			.select(CL.type, CL.points, CL.description, CL.site_url, CL.invoice_no, CL.timestamp)
+			.select(CL.type, CL.points, CL.description, CL.site_url, CL.bucket_store,
+					CL.invoice_no, CL.timestamp)
 			.where(CL.phone == phone)
 			.orderby(CL.timestamp, order=Order.desc)
 			.limit(20)
 			.run(as_dict=True)
 		)
 
-		# Earned points never expire in the current model (a card's expiry_date only
-		# governs UNSCANNED cards). Until a "points expire N months after earning"
-		# feature exists, the honest value is 0 — kept in the response so the mobile
-		# contract is stable.
-		points_expiring_soon = 0
-
+		# Banked points never expire at launch (Clock B deferred); a card's expiry_date only
+		# governs UNSCANNED cards. Kept in the response as an honest 0.
 		return {
 			"success": True,
 			"phone": phone,
 			"full_name": user.full_name,
-			"points_balance": points_balance,
+			"points_balance": sum(buckets.values()),
+			"general": general,
+			"restricted": restricted,
 			"total_earned": total_earned,
 			"total_redeemed": total_redeemed,
-			"points_expiring_soon": points_expiring_soon,
+			"points_expiring_soon": 0,
 			"ledger": ledger_entries,
 		}
 	except frappe.ValidationError as e:
@@ -299,6 +365,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			frappe.throw(_("Already redeemed for this invoice"))
 
 		if code:
+			# Legacy path (ADR-0002 D3, left intact): redeem a physical card directly at a store.
 			card_name = frappe.db.get_value("Coupon Card", {"code": code}, "name")
 			if not card_name:
 				frappe.throw(_("Card not found"))
@@ -324,7 +391,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 				card.save(ignore_permissions=True)
 
 				_post_ledger(phone, "CREDIT", points, f"Card {code} redeemed", site_url=site_url)
-				_post_ledger(phone, "DEBIT", amount, "Redeemed", site_url=site_url, invoice_no=invoice_no)
+				_debit_buckets(phone, amount, site_url, invoice_no)
 			except Exception:
 				frappe.db.rollback(save_point="coupon_redeem")
 				raise
@@ -333,13 +400,17 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			if not frappe.db.exists("Coupon User", phone):
 				frappe.throw(_("User not found"))
 
-			current_balance = _get_balance(phone)
-			if current_balance < amount:
+			# Lock the user row so two concurrent redemptions can't both read the same
+			# balance and overspend. (Withdrawal already locks; redeem must too.)
+			frappe.get_doc("Coupon User", phone, for_update=True)
+
+			# Spendable here = general + this store's locked bucket; other stores excluded.
+			if _available_at(phone, site_url) < amount:
 				frappe.throw(_("Insufficient balance"))
 
 			frappe.db.savepoint("coupon_redeem")
 			try:
-				_post_ledger(phone, "DEBIT", amount, "Redeemed", site_url=site_url, invoice_no=invoice_no)
+				_debit_buckets(phone, amount, site_url, invoice_no)
 			except Exception:
 				frappe.db.rollback(save_point="coupon_redeem")
 				raise
@@ -348,6 +419,7 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			"success": True,
 			"redeemed": amount,
 			"new_balance": _get_balance(phone),
+			"available_here": _available_at(phone, site_url),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
@@ -371,16 +443,17 @@ def reverse_redeem(invoice_no, site_url):
 		if not site_url or not isinstance(site_url, str) or not site_url.strip():
 			frappe.throw(_("site_url is required"))
 
-		debit = frappe.db.get_value(
+		# A redemption may be split across buckets (store-locked + general), i.e. MORE than
+		# one DEBIT row for the same invoice - reverse every one into its own bucket.
+		debits = frappe.get_all(
 			"Coupon Ledger",
-			{"invoice_no": invoice_no, "site_url": site_url, "type": "DEBIT"},
-			["name", "phone", "points"],
-			as_dict=True,
+			filters={"invoice_no": invoice_no, "site_url": site_url, "type": "DEBIT"},
+			fields=["phone", "points", "bucket_store"],
 		)
-		if not debit:
+		if not debits:
 			frappe.throw(_("No redemption found for this invoice"))
 
-		# Idempotency: CREDIT with invoice_no means a reversal already exists
+		# Idempotency: a CREDIT tagged with this invoice means a reversal already ran.
 		if frappe.db.exists("Coupon Ledger", {
 			"invoice_no": invoice_no,
 			"site_url": site_url,
@@ -388,14 +461,18 @@ def reverse_redeem(invoice_no, site_url):
 		}):
 			frappe.throw(_("Reversal already processed for this invoice"))
 
-		_post_ledger(debit.phone, "CREDIT", debit.points, f"Reversal for invoice {invoice_no}",
-					 site_url=site_url, invoice_no=invoice_no)
+		phone = debits[0].phone
+		restored = 0
+		for d in debits:
+			_post_ledger(d.phone, "CREDIT", d.points, f"Reversal for invoice {invoice_no}",
+						 site_url=site_url, invoice_no=invoice_no, bucket_store=d.bucket_store)
+			restored += cint(d.points)
 
 		return {
 			"success": True,
-			"phone": debit.phone,
-			"points_restored": debit.points,
-			"new_balance": _get_balance(debit.phone),
+			"phone": phone,
+			"points_restored": restored,
+			"new_balance": _get_balance(phone),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
@@ -502,7 +579,7 @@ def get_card_images(codes, img_type="qr"):
 
 @frappe.whitelist()
 def generate_cards(quantity, campaign, item_code=None, naming_series=None,
-				   batch_no=None, work_order=None):
+				   batch_no=None, work_order=None, origin="Central", store=None):
 	"""Generate a single batch of coupon cards for a campaign.
 
 	Points and expiry are derived from the campaign at generation (snapshot);
@@ -519,7 +596,7 @@ def generate_cards(quantity, campaign, item_code=None, naming_series=None,
 			qty, item_code or "", pts, expiry,
 			naming_series or "CC-.YYYY.-.#####",
 			batch_no or "", work_order or "",
-			campaign=campaign,
+			campaign=campaign, origin=origin, store=store or "",
 		)
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
@@ -564,19 +641,28 @@ def bulk_generate_cards(items):
 		user = frappe.session.user
 		fields = [
 			"name", "naming_series", "code", "campaign", "status", "item_code",
-			"points_value", "expiry_date", "batch_no", "work_order", "is_used",
-			"docstatus", "creation", "modified", "owner", "modified_by",
+			"points_value", "expiry_date", "batch_no", "work_order",
+			"origin", "store",
+			"is_used", "docstatus", "creation", "modified", "owner", "modified_by",
 		]
 		all_values = []
 
 		for qty, pts, expiry, row in validated:
 			series = row.get("naming_series") or "CC-.YYYY.-.#####"
-			codes = _unique_codes(qty, seen)  # seen grows across rows
+			origin = row.get("origin") or "Central"
+			store = row.get("store") or ""
+			prefix = _code_prefix()
+			if origin == "Store" and store:
+				ns = frappe.db.get_value("Coupon Store", store, "code_namespace")
+				if ns:
+					prefix = f"{prefix}-{ns}" if prefix else ns
+			codes = _unique_codes(qty, seen, code_prefix=prefix)  # seen grows across rows
 			for code in codes:
 				all_values.append([
 					make_autoname(series), series, code,
 					row["campaign"], "Active", row.get("item_code") or "",
 					pts, expiry, row.get("batch_no") or "", row.get("work_order") or "",
+					origin, store,
 					0, 0, now, now, user, user,
 				])
 
@@ -587,7 +673,7 @@ def bulk_generate_cards(items):
 		return {"success": False, "error": str(e)}
 
 
-def _unique_codes(quantity, seen=None):
+def _unique_codes(quantity, seen=None, code_prefix=None):
 	"""
 	Generate `quantity` unique XXXX-XXXX codes.
 
@@ -598,7 +684,7 @@ def _unique_codes(quantity, seen=None):
 	if seen is None:
 		seen = set()
 
-	prefix = _code_prefix()  # fetched once, not per-code
+	prefix = code_prefix if code_prefix is not None else _code_prefix()  # fetched once, not per-code
 	result = []
 	CC = frappe.qb.DocType("Coupon Card")
 
@@ -628,21 +714,92 @@ def _unique_codes(quantity, seen=None):
 
 def _generate_batch(quantity, item_code, points_value, expiry_date,
 					naming_series, batch_no, work_order, source_stock_entry="",
-					campaign="", status="Active"):
-	codes = _unique_codes(quantity)
+					campaign="", status="Active", origin="Central", store="", source_invoice=""):
+	# Store coupons carry a store-namespaced prefix so independent minting never collides.
+	prefix = _code_prefix()
+	if origin == "Store" and store:
+		ns = frappe.db.get_value("Coupon Store", store, "code_namespace")
+		if ns:
+			prefix = f"{prefix}-{ns}" if prefix else ns
+	codes = _unique_codes(quantity, code_prefix=prefix)
 
 	now = now_datetime()
 	user = frappe.session.user
 	fields = [
 		"name", "naming_series", "code", "campaign", "status", "item_code",
 		"points_value", "expiry_date", "batch_no", "work_order", "source_stock_entry",
+		"origin", "store", "source_invoice",
 		"is_used", "docstatus", "creation", "modified", "owner", "modified_by",
 	]
 	values = [
 		[make_autoname(naming_series), naming_series, code, campaign, status, item_code,
 		 points_value, expiry_date, batch_no, work_order, source_stock_entry,
+		 origin, store, source_invoice,
 		 0, 0, now, now, user, user]
 		for code in codes
 	]
 	frappe.db.bulk_insert("Coupon Card", fields=fields, values=values)
 	return {"success": True, "count": len(codes), "codes": codes}
+
+
+@frappe.whitelist()
+def register_cards(store, cards):
+	"""Register a store's immutable card DEFINITIONS on HQ (ADR-0002/0003).
+
+	The store mints locally with a store-namespaced code, then calls this so HQ can resolve
+	a scan on its own (keeps the mobile client dumb-simple). Idempotent per code - the unique
+	index on `code` is the real backstop, so a retry never double-inserts.
+	"""
+	import json
+
+	try:
+		roles = frappe.get_roles()
+		if "System Manager" not in roles and "Coupon Manager" not in roles:
+			frappe.throw(_("Not permitted"))
+
+		if not store or not frappe.db.exists("Coupon Store", store):
+			frappe.throw(_("Unknown store"))
+		if not frappe.db.get_value("Coupon Store", store, "is_active"):
+			frappe.throw(_("Store {0} is not active").format(store))
+		namespace = frappe.db.get_value("Coupon Store", store, "code_namespace")
+
+		if isinstance(cards, str):
+			cards = json.loads(cards)
+		if not cards:
+			frappe.throw(_("cards list cannot be empty"))
+
+		registered, skipped = [], []
+		for row in cards:
+			code = (row.get("code") or "").strip()
+			if not code:
+				frappe.throw(_("each card needs a code"))
+			if namespace and namespace not in code.split("-"):
+				frappe.throw(_("Code {0} does not carry store namespace {1}").format(code, namespace))
+			if not row.get("expiry_date"):
+				frappe.throw(_("Code {0} is missing expiry_date").format(code))
+
+			# Idempotent: skip a code HQ already knows (retry-safe).
+			if frappe.db.exists("Coupon Card", {"code": code}):
+				skipped.append(code)
+				continue
+
+			card = frappe.new_doc("Coupon Card")
+			card.naming_series = "CC-.YYYY.-.#####"
+			card.code = code
+			card.origin = "Store"
+			card.store = store
+			card.status = "Active"
+			card.points_value = cint(row.get("points_value"))
+			card.expiry_date = row.get("expiry_date")
+			card.item_code = row.get("item_code")
+			# The campaign is the store's; only link it if HQ happens to know it - otherwise
+			# value comes from the points_value snapshot (D1).
+			camp = row.get("campaign")
+			if camp and frappe.db.exists("Coupon Campaign", camp):
+				card.campaign = camp
+			card.insert(ignore_permissions=True)
+			registered.append(code)
+
+		return {"success": True, "registered": registered, "skipped": skipped}
+	except frappe.ValidationError as e:
+		return {"success": False, "error": str(e)}
