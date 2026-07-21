@@ -3,6 +3,7 @@ and docs/adr/0003. Central points are general (spendable anywhere); store coupon
 their store; a redemption at store X may draw general + X only, store-locked-first."""
 
 import unittest
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -22,8 +23,10 @@ from coupon_system.api import (
 
 _STORE_A = "https://store-a.example.com"
 _STORE_B = "https://store-b.example.com"
+_STORE_RT = "https://rt1.example.com"
 _NS_A = "SA1"
 _NS_B = "SB1"
+_NS_RT = "RT1"
 
 _ITEM_CODE = None
 
@@ -35,16 +38,18 @@ def get_item_code():
 	return _ITEM_CODE
 
 
-def ensure_store(site_url, name, namespace):
+def ensure_store(site_url, name, namespace, route_scans=0):
 	if not frappe.db.exists("Coupon Store", site_url):
 		doc = frappe.new_doc("Coupon Store")
 		doc.store_name = name
 		doc.site_url = site_url
 		doc.code_namespace = namespace
 		doc.is_active = 1
+		doc.route_scans = route_scans
 		doc.insert(ignore_permissions=True)
 	else:
-		frappe.db.set_value("Coupon Store", site_url, {"code_namespace": namespace, "is_active": 1})
+		frappe.db.set_value("Coupon Store", site_url,
+							{"code_namespace": namespace, "is_active": 1, "route_scans": route_scans})
 	return site_url
 
 
@@ -83,7 +88,7 @@ class TestStoreBuckets(FrappeTestCase):
 	def tearDownClass(cls):
 		frappe.db.delete("Coupon Card", {"code": ["like", "TB-%"]})
 		frappe.db.delete("Coupon Card", {"store": ["in", [_STORE_A, _STORE_B]]})
-		for name in (_STORE_A, _STORE_B):
+		for name in (_STORE_A, _STORE_B, _STORE_RT):
 			if frappe.db.exists("Coupon Store", name):
 				frappe.delete_doc("Coupon Store", name, ignore_permissions=True, force=True)
 		super().tearDownClass()
@@ -264,3 +269,34 @@ class TestStoreBuckets(FrappeTestCase):
 				e.insert(ignore_permissions=True)
 		finally:
 			frappe.local.conf.pop("coupon_site_role", None)
+
+	# --- HQ scan gateway: route a self-contained store's code by namespace ---
+	def test_route_store_for_code_matches_namespace(self):
+		from coupon_system.gateway import route_store_for_code
+
+		ensure_store(_STORE_RT, "RT1 Store", _NS_RT, route_scans=1)
+		s = route_store_for_code(f"{_NS_RT}-AAAA-BBBB")
+		self.assertIsNotNone(s)
+		self.assertEqual(s.code_namespace, _NS_RT)
+		# a namespace with no routable store -> no route
+		self.assertIsNone(route_store_for_code("NOSUCH-AAAA-BBBB"))
+
+	def test_route_ignores_non_routable_store(self):
+		from coupon_system.gateway import route_store_for_code
+
+		# HQ-backed store (route_scans=0) must NOT be a proxy target
+		ensure_store(_STORE_A, "A", _NS_A, route_scans=0)
+		self.assertIsNone(route_store_for_code(f"{_NS_A}-AAAA-BBBB"))
+
+	def test_scan_proxies_unknown_code_to_self_contained_store(self):
+		ensure_store(_STORE_RT, "RT1 Store", _NS_RT, route_scans=1)
+		canned = {"success": True, "points_added": 7, "locked_to_store": None, "new_balance": 7}
+		with patch("coupon_system.gateway.proxy_scan", return_value=canned) as m:
+			res = scan(self.phone, f"{_NS_RT}-ZZZZ-YYYY")  # not a local card -> routed
+		self.assertEqual(res, canned)
+		m.assert_called_once()
+
+	def test_scan_unknown_code_with_no_route_is_not_found(self):
+		res = scan(self.phone, "GHOST-1234-5678")
+		self.assertFalse(res["success"])
+		self.assertIn("not found", res["error"].lower())

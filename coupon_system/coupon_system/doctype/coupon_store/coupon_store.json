@@ -8,6 +8,7 @@
   "store_name",
   "site_url",
   "code_namespace",
+  "route_scans",
   "is_active",
   "section_break_broker",
   "service_api_key",
@@ -38,6 +39,13 @@
    "fieldtype": "Data",
    "label": "Code Namespace",
    "unique": 1
+  },
+  {
+   "default": "0",
+   "description": "Self-contained store: if a scanned code carries this namespace but isn't a card HQ holds, HQ proxies the scan to this store's site_url using the broker credentials below (single client call; HQ is the gateway). Leave off for HQ-backed stores — their cards live on HQ.",
+   "fieldname": "route_scans",
+   "fieldtype": "Check",
+   "label": "Route Scans (self-contained store)"
   },
   {
    "default": "1",

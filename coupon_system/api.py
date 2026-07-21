@@ -236,6 +236,13 @@ def scan(phone, code, full_name=None):
 
 		card_name = frappe.db.get_value("Coupon Card", {"code": code}, "name")
 		if not card_name:
+			# Not a card HQ holds — it may belong to a self-contained store. Route by the code's
+			# namespace and proxy the scan there (single client call; HQ is the gateway).
+			from coupon_system.gateway import proxy_scan, route_store_for_code
+
+			store = route_store_for_code(code)
+			if store:
+				return proxy_scan(store, phone, code, full_name)
 			frappe.throw(_("Card not found"))
 
 		# Lock the row before reading so concurrent scans can't both see is_used=0
