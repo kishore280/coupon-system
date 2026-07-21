@@ -84,6 +84,9 @@ def store_mint(quantity, campaign):
 	"""
 	from coupon_system.api import _campaign_snapshot, _insert_cards, _store_prefix, _unique_codes
 
+	roles = frappe.get_roles()
+	if "System Manager" not in roles and "Coupon Manager" not in roles:
+		frappe.throw(_("Not permitted"))
 	if not is_store():
 		frappe.throw(_("store_mint runs only on a Store-mode site"))
 
