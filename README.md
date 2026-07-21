@@ -6,6 +6,13 @@ discounts. All point data lives on a single central **HQ** site — every branch
 mobile app talk to HQ over its API, so a customer can earn at one location and spend at
 another against one shared balance.
 
+> **Beyond this v1 README:** the system has since gained **store-locked coupons** — a store mints
+> its own coupons whose earned points lock to that store, alongside the central (spend-anywhere)
+> program. Design: `CONTEXT.md` + `docs/adr/0001–0003` + `docs/store-coupons-build-spec.md`.
+> Manual store setup: **`docs/store-mode-setup.md`**. Store redemption reuses
+> `oxifix_multisite_sync`. Everything below still describes the original central program (and is
+> current for it).
+
 ---
 
 ## Architecture
