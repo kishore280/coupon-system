@@ -73,11 +73,11 @@
   },
   {
    "default": "HQ",
-   "description": "HQ = this site owns the single points ledger. Store = holds its own campaigns/cards and mints coupons, writing points to HQ. The HQ connection (url + creds) is read from HQ Integration Settings (oxifix_multisite_sync), which also drives redemption - one HQ config, not two.",
+   "description": "HQ = the central program (manufacturing): owns the ONE central ledger; points spendable anywhere. Store = an HQ-backed store: mints + registers coupons to HQ, points live on HQ locked to this store. Standalone Store = a self-contained store: its own LOCAL ledger, no central HQ - everything within the store (point HQ Integration Settings.hq_url at this site itself for loopback redemption). HQ connection creds come from HQ Integration Settings.",
    "fieldname": "site_role",
    "fieldtype": "Select",
    "label": "Site Role",
-   "options": "HQ\nStore"
+   "options": "HQ\nStore\nStandalone Store"
   }
  ],
  "issingle": 1,

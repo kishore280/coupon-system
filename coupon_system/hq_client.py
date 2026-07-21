@@ -14,16 +14,24 @@ from frappe.utils import get_request_session, get_url
 _TIMEOUT = 15
 
 
-def is_store():
-	# A site_config override (`coupon_site_role`) lets an admin declare Store mode BEFORE the app
-	# is installed, so after_install skips HQ-only seeding (default campaigns, mobile user).
-	# Falls back to the setting once the doctype exists.
-	role = (
+def _site_role():
+	# A site_config override (`coupon_site_role`) lets an admin declare the role BEFORE the app is
+	# installed, so after_install skips HQ-only seeding. Falls back to the setting once it exists.
+	return (
 		frappe.conf.get("coupon_site_role")
 		or frappe.db.get_single_value("Coupon System Settings", "site_role")
 		or "HQ"
 	)
-	return role == "Store"
+
+
+def is_store():
+	"""HQ-backed store (Mode A): thin, registers to HQ, local ledger is guarded off."""
+	return _site_role() == "Store"
+
+
+def is_self_contained():
+	"""Standalone store (Mode B): its own local ledger, no central HQ - everything local."""
+	return _site_role() == "Standalone Store"
 
 
 def _conf():
