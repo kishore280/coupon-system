@@ -95,8 +95,14 @@ def store_mint(quantity, campaign):
 	roles = frappe.get_roles()
 	if "System Manager" not in roles and "Coupon Manager" not in roles:
 		frappe.throw(_("Not permitted"))
+	if is_self_contained():
+		# Self-contained store: one plain local wallet - just mint locally (no HQ, no buckets),
+		# regardless of the campaign's owned_by_store. Keeps the Generate button working here.
+		from coupon_system.api import generate_cards
+
+		return generate_cards(quantity, campaign)
 	if not is_store():
-		frappe.throw(_("store_mint runs only on a Store-mode site"))
+		frappe.throw(_("store_mint runs only on a store site"))
 
 	sid = store_id()
 	# Guard: the local Coupon Store + namespace must exist, or codes would be UN-namespaced
