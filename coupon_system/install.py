@@ -55,40 +55,6 @@ def _item_custom_fields(anchor):
 	}
 
 
-def _sales_invoice_custom_fields():
-	# Store-mode POS fields: cashier enters a customer's phone + points to redeem, and/or the
-	# code of a coupon handed out. Present on all sites but only acted on in Store mode.
-	return {
-		"Sales Invoice": [
-			{
-				"fieldname": "custom_coupon_section",
-				"fieldtype": "Section Break",
-				"label": "Coupon",
-				"insert_after": "customer",
-				"collapsible": 1,
-			},
-			{
-				"fieldname": "custom_coupon_redeem_phone",
-				"fieldtype": "Data",
-				"label": "Coupon Phone (redeem)",
-				"insert_after": "custom_coupon_section",
-			},
-			{
-				"fieldname": "custom_coupon_redeem_points",
-				"fieldtype": "Int",
-				"label": "Points to Redeem",
-				"insert_after": "custom_coupon_redeem_phone",
-			},
-			{
-				"fieldname": "custom_coupon_given",
-				"fieldtype": "Data",
-				"label": "Coupon Given (code)",
-				"insert_after": "custom_coupon_redeem_points",
-			},
-		]
-	}
-
-
 # Default campaigns seeded on install (idempotent). audience is set only when the
 # matching Customer Group already exists — otherwise left blank (it is label-only).
 _DEFAULT_CAMPAIGNS = [
@@ -189,7 +155,6 @@ def ensure_custom_fields():
 			break
 
 	create_custom_fields(_item_custom_fields(anchor), ignore_validate=True)
-	create_custom_fields(_sales_invoice_custom_fields(), ignore_validate=True)
 
 	# Existing coupon items predate the enable switch — default them to enabled
 	# (only touches NULLs, never overrides an explicit disable).

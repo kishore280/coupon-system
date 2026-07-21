@@ -9,7 +9,7 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import get_url
 
 _TIMEOUT = 15
 
@@ -27,13 +27,18 @@ def is_store():
 
 
 def _conf():
-	s = frappe.get_cached_doc("Coupon System Settings")
-	base = (s.hq_base_url or "").rstrip("/")
-	key = s.hq_api_key
-	secret = s.get_password("hq_api_secret", raise_exception=False)
-	store_id = s.hq_store_id
-	if not (base and key and secret and store_id):
-		frappe.throw(_("Store mode is not configured (need HQ base URL, API key, secret, and store id)"))
+	# Reuse the sync app's HQ connection (the SAME creds the branch redemption already uses)
+	# rather than a second, drift-prone config. This store's identity on HQ is its own URL.
+	s = frappe.get_cached_doc("HQ Integration Settings")
+	base = (s.hq_url or "").rstrip("/")
+	key = s.api_key
+	try:
+		secret = s.get_password("api_secret")
+	except Exception:
+		secret = s.get("api_secret")
+	store_id = get_url()
+	if not (base and key and secret):
+		frappe.throw(_("HQ Integration Settings not configured (need hq_url, api_key, api_secret)"))
 	return base, key, secret, store_id
 
 
@@ -65,14 +70,6 @@ def call_hq(method, **params):
 
 def hq_register_cards(cards):
 	return call_hq("register_cards", store=store_id(), cards=json.dumps(cards))
-
-
-def hq_redeem(phone, amount, invoice_no):
-	return call_hq("redeem", phone=phone, amount=amount, site_url=store_id(), invoice_no=invoice_no)
-
-
-def hq_reverse(invoice_no):
-	return call_hq("reverse_redeem", invoice_no=invoice_no, site_url=store_id())
 
 
 def hq_mark_given(code, invoice_no):
@@ -119,10 +116,3 @@ def store_mint(quantity, campaign):
 	return {"success": True, "codes": codes, "registered_to": sid}
 
 
-@frappe.whitelist()
-def store_redeem(phone, amount, invoice_no):
-	"""Spend a customer's points at this store, against an invoice — debits HQ's ledger
-	(store-locked first, then general). Store mode only."""
-	if not is_store():
-		frappe.throw(_("store_redeem runs only on a Store-mode site"))
-	return hq_redeem(phone, cint(amount), invoice_no)

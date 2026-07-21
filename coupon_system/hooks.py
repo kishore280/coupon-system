@@ -107,12 +107,11 @@ doc_events = {
 		"on_submit": "coupon_system.coupon_auto.generate_on_work_order",
 		"on_cancel": "coupon_system.coupon_auto.void_on_work_order_cancel",
 	},
-	# Store mode only (gated by is_store() inside): POS redeem/reverse against HQ.
-	"Sales Invoice": {
-		"on_submit": "coupon_system.store_hooks.on_sales_invoice_submit",
-		"on_cancel": "coupon_system.store_hooks.on_sales_invoice_cancel",
-	},
 	# Structural SSOT guard: a store site may never write a local points ledger.
+	# Redemption is NOT hooked here - it is handled by oxifix_multisite_sync's existing Sales
+	# Invoice flow (show-balance-by-phone -> GL entries -> POST coupon_system.api.redeem). That
+	# call passes the store's own site_url, so our now-bucket-aware redeem() spends store-locked
+	# points automatically. No duplicate hook needed.
 	"Coupon Ledger": {
 		"before_insert": "coupon_system.guards.block_local_ledger_in_store_mode",
 	},
