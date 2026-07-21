@@ -3,6 +3,17 @@
 Grounded in `CONTEXT.md` + ADR-0001/0002/0003. This is the concrete work. Nothing here is a
 phase — it's the full launch surface. Deferred items are listed explicitly at the end.
 
+> **REVISION (2026-07-21) — redemption is REUSED, not rebuilt.** The store-side redemption hooks
+> and custom Sales Invoice fields described below were **removed**: `oxifix_multisite_sync` already
+> implements the complete redemption (show-balance-by-phone → GL entries for the discount → POST
+> `coupon_system.api.redeem` with `site_url = get_url()`) and reverse-on-cancel. Because HQ's
+> `redeem()` is now bucket-aware, that unchanged flow spends store-locked points automatically.
+> So **the store side of coupon_system is MINTING ONLY** (`store_mint`/`register_cards`), and its
+> `hq_client` reads the HQ connection from **`HQ Integration Settings`** (not its own config).
+> "F1 (no discount)" is moot — the sync app does the accounting. **Identity:** a store's bucket key
+> is `get_url()`, so each store's `host_name` MUST be pinned in site_config, and its `Coupon Store`
+> name on HQ must equal that exact value (scheme+host+port).
+
 Terminology: **HQ** = the central site (owns ledger + resolution registry). **Store site** = a
 store's own ERPNext (owns its campaigns, its immutable card defs, its reporting; never the ledger).
 
