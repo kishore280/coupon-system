@@ -10,21 +10,28 @@ from frappe.utils import cint
 
 
 def on_sales_invoice_submit(doc, method=None):
-	from coupon_system.hq_client import hq_redeem, is_store
+	from coupon_system.hq_client import hq_mark_given, hq_redeem, is_store
 
 	if not is_store():
 		return
 
+	# Redeem points, if the cashier entered a phone + points.
 	phone = (doc.get("custom_coupon_redeem_phone") or "").strip()
 	points = cint(doc.get("custom_coupon_redeem_points"))
-	if not phone or points <= 0:
-		return
+	if phone and points > 0:
+		res = hq_redeem(phone, points, doc.name)
+		# A submit RETRY hits idempotency ("already redeemed") - that's success, not failure.
+		if not res.get("success") and "already redeemed" not in (res.get("error") or "").lower():
+			frappe.log_error(str(res), "coupon store redeem failed")
+			frappe.throw(_("Coupon redemption failed at HQ: {0}").format(res.get("error") or "unknown"))
 
-	try:
-		hq_redeem(phone, points, doc.name)
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "coupon store redeem failed")
-		frappe.throw(_("Coupon redemption failed at HQ — invoice not submitted."))
+	# Record which coupon was handed out with this invoice (traceability only - never block).
+	given = (doc.get("custom_coupon_given") or "").strip()
+	if given:
+		try:
+			hq_mark_given(given, doc.name)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "coupon mark_given failed")
 
 
 def on_sales_invoice_cancel(doc, method=None):
@@ -33,12 +40,13 @@ def on_sales_invoice_cancel(doc, method=None):
 	if not is_store():
 		return
 
-	# Only reverse if this invoice actually redeemed points.
+	# Only relevant if this invoice actually redeemed points.
 	if not (doc.get("custom_coupon_redeem_phone") and cint(doc.get("custom_coupon_redeem_points")) > 0):
 		return
 
-	try:
-		hq_reverse(doc.name)
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "coupon store reverse failed")
-		frappe.throw(_("Coupon reversal failed at HQ — invoice not cancelled."))
+	res = hq_reverse(doc.name)
+	# Nothing-to-reverse or already-reversed must NEVER block the cancellation.
+	err = (res.get("error") or "").lower()
+	if not res.get("success") and "no redemption" not in err and "already processed" not in err:
+		frappe.log_error(str(res), "coupon store reverse failed")
+		frappe.throw(_("Coupon reversal failed at HQ: {0}").format(res.get("error") or "unknown"))

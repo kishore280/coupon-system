@@ -83,13 +83,14 @@ def _post_ledger(phone, entry_type, points, description, site_url=None, invoice_
 	return entry
 
 
-def _debit_buckets(phone, amount, store, invoice_no, description="Redeemed"):
+def _debit_buckets(phone, amount, store, invoice_no, description="Redeemed", buckets=None):
 	"""Spend `amount` points at `store`, draining that store's locked bucket FIRST, then
 	general - so store-locked points never get stranded. Posts up to two DEBIT rows (one
 	per bucket touched) to keep the buckets exact and fully auditable; both carry the same
 	invoice_no and site_url = the redeeming store. Caller must already hold the user row
-	lock and have checked availability."""
-	buckets = _buckets(phone)
+	lock and have checked availability. Pass `buckets` to avoid recomputing the aggregate."""
+	if buckets is None:
+		buckets = _buckets(phone)
 	from_store = min(amount, max(buckets.get(store, 0), 0)) if store else 0
 	from_general = amount - from_store
 	if from_store > 0:
@@ -303,14 +304,16 @@ def balance(phone):
 		# store the customer holds locked points at. The app shows the total + this breakdown.
 		buckets = _buckets(phone)
 		general = buckets.get(None, 0)
+		store_ids = [s for s in buckets if s is not None and buckets[s] > 0]
+		names = {
+			r.name: r.store_name
+			for r in frappe.get_all(
+				"Coupon Store", filters={"name": ["in", store_ids]}, fields=["name", "store_name"]
+			)
+		} if store_ids else {}
 		restricted = [
-			{
-				"store": store,
-				"store_name": frappe.db.get_value("Coupon Store", store, "store_name") or store,
-				"points": pts,
-			}
-			for store, pts in buckets.items()
-			if store is not None and pts > 0
+			{"store": s, "store_name": names.get(s) or s, "points": buckets[s]}
+			for s in store_ids
 		]
 
 		ledger_entries = (
@@ -404,22 +407,25 @@ def redeem(phone, amount, site_url, invoice_no, code=None, full_name=None):
 			# balance and overspend. (Withdrawal already locks; redeem must too.)
 			frappe.get_doc("Coupon User", phone, for_update=True)
 
+			# One aggregate read, reused for the availability check and the debit split.
 			# Spendable here = general + this store's locked bucket; other stores excluded.
-			if _available_at(phone, site_url) < amount:
+			buckets = _buckets(phone)
+			if buckets.get(None, 0) + max(buckets.get(site_url, 0), 0) < amount:
 				frappe.throw(_("Insufficient balance"))
 
 			frappe.db.savepoint("coupon_redeem")
 			try:
-				_debit_buckets(phone, amount, site_url, invoice_no)
+				_debit_buckets(phone, amount, site_url, invoice_no, buckets=buckets)
 			except Exception:
 				frappe.db.rollback(save_point="coupon_redeem")
 				raise
 
+		after = _buckets(phone)
 		return {
 			"success": True,
 			"redeemed": amount,
-			"new_balance": _get_balance(phone),
-			"available_here": _available_at(phone, site_url),
+			"new_balance": sum(after.values()),
+			"available_here": after.get(None, 0) + max(after.get(site_url, 0), 0),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
@@ -797,9 +803,63 @@ def register_cards(store, cards):
 			camp = row.get("campaign")
 			if camp and frappe.db.exists("Coupon Campaign", camp):
 				card.campaign = camp
-			card.insert(ignore_permissions=True)
-			registered.append(code)
+
+			# The unique index on `code` is the real backstop: under a concurrent
+			# double-register the loser hits an IntegrityError - treat that as "already there"
+			# rather than letting it escape as a 500.
+			frappe.db.savepoint("reg_card")
+			try:
+				card.insert(ignore_permissions=True)
+				registered.append(code)
+			except Exception:
+				frappe.db.rollback(save_point="reg_card")
+				if frappe.db.exists("Coupon Card", {"code": code}):
+					skipped.append(code)
+				else:
+					raise
 
 		return {"success": True, "registered": registered, "skipped": skipped}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def mark_given(code, invoice_no):
+	"""Traceability: record that a store coupon was handed out with a Sales Invoice by
+	stamping source_invoice on the card. Idempotent - re-stamping is a no-op."""
+	roles = frappe.get_roles()
+	if "System Manager" not in roles and "Coupon Manager" not in roles:
+		frappe.throw(_("Not permitted"))
+	name = frappe.db.get_value("Coupon Card", {"code": code}, "name")
+	if not name:
+		frappe.throw(_("Card not found"))
+	frappe.db.set_value("Coupon Card", name, "source_invoice", invoice_no)
+	return {"success": True, "code": code, "source_invoice": invoice_no}
+
+
+@frappe.whitelist()
+def store_card_counts(store):
+	"""Lifecycle counts for a store's registered coupons, so a store can see its own stock
+	(HQ is the source of truth for used/unused - the store's local card status is cosmetic)."""
+	roles = frappe.get_roles()
+	if "System Manager" not in roles and "Coupon Manager" not in roles:
+		frappe.throw(_("Not permitted"))
+	CC = frappe.qb.DocType("Coupon Card")
+	rows = (
+		frappe.qb.from_(CC)
+		.select(CC.status, frappe.qb.functions("COUNT", CC.name).as_("n"))
+		.where((CC.origin == "Store") & (CC.store == store))
+		.groupby(CC.status)
+		.run(as_dict=True)
+	)
+	counts = {r.status: cint(r.n) for r in rows}
+	return {
+		"success": True,
+		"store": store,
+		"active": counts.get("Active", 0),
+		"redeemed": counts.get("Redeemed", 0),
+		"expired": counts.get("Expired", 0),
+		"retired": counts.get("Retired", 0),
+		"void": counts.get("Void", 0),
+		"total": sum(counts.values()),
+	}

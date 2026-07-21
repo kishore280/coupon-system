@@ -153,7 +153,12 @@ def ensure_withdrawal_workflow():
 
 
 def seed_campaigns():
-	"""Create the default campaigns if missing. Never overwrites existing ones."""
+	"""Create the default campaigns if missing. Never overwrites existing ones. Skipped on a
+	store - a store runs its own store-owned campaigns, not the generic HQ defaults."""
+	from coupon_system.hq_client import is_store
+
+	if is_store():
+		return
 	for c in _DEFAULT_CAMPAIGNS:
 		if frappe.db.exists("Coupon Campaign", c["campaign_name"]):
 			continue
@@ -198,6 +203,12 @@ def ensure_custom_fields():
 
 
 def _create_mobile_user():
+	from coupon_system.hq_client import is_store
+
+	# The mobile user + its API credentials belong on HQ (the app talks to HQ). Not on a store.
+	if is_store():
+		return
+
 	email = "coupon-mobile@system.local"
 
 	if frappe.db.exists("User", email):
