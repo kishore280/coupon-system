@@ -69,3 +69,39 @@ store (via the sync's Sales Invoice) spends them → redeeming anywhere else is 
 - **Store**: its campaigns + immutable card defs + minting. It has the `Coupon Ledger` doctype
   installed but a `before_insert` guard makes it **unwritable** in Store mode — all points are HQ's.
 - **Redemption + the discount accounting**: `oxifix_multisite_sync`, unchanged.
+
+---
+
+# Standalone (self-contained) store — the OTHER mode
+
+A **`site_role = Standalone Store`** site is a *self-contained* store: its **own local** ledger,
+customers, and cards — **no central HQ**, one plain wallet, everything within the store. It's your
+coupon app running standalone. Use this when a store/merchant wants to own their own data.
+
+> **Prereq — make the option appear:** the `Standalone Store` value needs the doctype meta on the
+> site. Run `bench --site <site> migrate` (or reload the `Coupon System Settings` doctype) once, or
+> `Site Role` won't list it in the desk dropdown.
+
+## Desk steps
+The **golden rule** is the loopback: `HQ Integration Settings.hq_url`, the `Coupon Store` name, and
+the site's own `get_url()` are all the **same value** — the site itself.
+
+1. **`Coupon System Settings`** → `Site Role` = **`Standalone Store`**.
+2. **`User`** → create one with **`Coupon Manager`** → Generate Keys → for **redemption** creds.
+3. **`User`** → create one with **`Coupon Mobile`** → Generate Keys → for the **mobile app** creds.
+4. **`HQ Integration Settings`** → `hq_url` = **this site's own URL** (loopback);
+   `api_key`/`api_secret` = the Coupon Manager keys (step 2);
+   **`mobile_api_key`/`mobile_api_secret` = the Coupon Mobile keys (step 3)** — the app's
+   `get_mobile_config` REQUIRES these, or the app can't scan/see balance.
+5. **`Coupon Store`** → `site_url` = the site's own URL, `is_active` ✓. (namespace optional.)
+6. **`Coupon Campaign`** → plain campaign; **leave Owned By Store blank** (it's auto-cleared on a
+   self-contained store — there's no other store to lock to).
+7. Open the campaign → **Generate Cards** → mints **locally** (no HQ).
+
+## How it behaves
+- **generate / scan / balance**: all **local** (the ledger guard is off in this role).
+- **redemption + reversal**: `oxifix_multisite_sync` detects self-contained (`is_self_contained()`)
+  and calls `coupon_system.api.redeem` **directly, in the same transaction** as the Sales Invoice —
+  no HTTP round-trip to itself, and atomic with the invoice. *(Requires the coupon_hooks patch in
+  `oxifix_multisite_sync`.)*
+- **owned_by_store**: cleared on save (a standalone store is one wallet — nothing to lock to).
