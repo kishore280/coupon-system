@@ -9,7 +9,7 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import get_url
+from frappe.utils import get_request_session, get_url
 
 _TIMEOUT = 15
 
@@ -54,7 +54,7 @@ def call_hq(method, **params):
 	caller must interpret (e.g. an idempotent "already redeemed" on a POS retry)."""
 	base, key, secret, _sid = _conf()
 	url = f"{base}/api/method/coupon_system.api.{method}"
-	session = frappe.get_request_session()
+	session = get_request_session()
 	try:
 		resp = session.post(
 			url, headers={"Authorization": f"token {key}:{secret}"}, data=params, timeout=_TIMEOUT
