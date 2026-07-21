@@ -11,6 +11,13 @@
   "section_break_withdrawals",
   "enable_withdrawals",
   "points_to_currency_rate",
+  "section_break_deploy",
+  "site_role",
+  "hq_base_url",
+  "column_break_deploy",
+  "hq_store_id",
+  "hq_api_key",
+  "hq_api_secret",
   "architecture_help"
  ],
  "fields": [
@@ -63,6 +70,49 @@
    "fieldname": "points_to_currency_rate",
    "fieldtype": "Float",
    "label": "Points to Currency Rate"
+  },
+  {
+   "fieldname": "section_break_deploy",
+   "fieldtype": "Section Break",
+   "label": "Deployment (HQ / Store)"
+  },
+  {
+   "default": "HQ",
+   "description": "HQ = this site owns the single points ledger. Store = a thin store that holds its own campaigns/cards but writes ALL points to HQ over HTTP.",
+   "fieldname": "site_role",
+   "fieldtype": "Select",
+   "label": "Site Role",
+   "options": "HQ\nStore"
+  },
+  {
+   "depends_on": "eval:doc.site_role=='Store'",
+   "description": "HQ base URL this store calls, e.g. https://oxifixprivateltd.com",
+   "fieldname": "hq_base_url",
+   "fieldtype": "Data",
+   "label": "HQ Base URL"
+  },
+  {
+   "fieldname": "column_break_deploy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.site_role=='Store'",
+   "description": "This store's identity on HQ = its Coupon Store name (its site_url), e.g. https://oxifixretail1.com",
+   "fieldname": "hq_store_id",
+   "fieldtype": "Data",
+   "label": "HQ Store Id"
+  },
+  {
+   "depends_on": "eval:doc.site_role=='Store'",
+   "fieldname": "hq_api_key",
+   "fieldtype": "Data",
+   "label": "HQ API Key"
+  },
+  {
+   "depends_on": "eval:doc.site_role=='Store'",
+   "fieldname": "hq_api_secret",
+   "fieldtype": "Password",
+   "label": "HQ API Secret"
   }
  ],
  "issingle": 1,

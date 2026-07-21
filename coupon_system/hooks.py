@@ -107,6 +107,15 @@ doc_events = {
 		"on_submit": "coupon_system.coupon_auto.generate_on_work_order",
 		"on_cancel": "coupon_system.coupon_auto.void_on_work_order_cancel",
 	},
+	# Store mode only (gated by is_store() inside): POS redeem/reverse against HQ.
+	"Sales Invoice": {
+		"on_submit": "coupon_system.store_hooks.on_sales_invoice_submit",
+		"on_cancel": "coupon_system.store_hooks.on_sales_invoice_cancel",
+	},
+	# Structural SSOT guard: a store site may never write a local points ledger.
+	"Coupon Ledger": {
+		"before_insert": "coupon_system.guards.block_local_ledger_in_store_mode",
+	},
 }
 
 scheduler_events = {
