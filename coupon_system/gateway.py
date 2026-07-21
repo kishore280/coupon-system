@@ -61,7 +61,11 @@ def _proxy(store, endpoint, payload):
 				"error": _("Store {0} has no routing credentials").format(store.name)}
 
 	url = f"{store.site_url.rstrip('/')}/api/method/coupon_system.api.{endpoint}"
-	session = get_request_session(max_retries=1)
+	# NO transport-level retries: a proxied scan is a non-idempotent write (credits points, marks
+	# the card used). If the connection drops after the store commits, an auto-retry could either
+	# double-credit or surface a false "already used" to the client. So we make exactly one attempt
+	# and let the circuit breaker + the client's own retry handle genuinely-transient failures.
+	session = get_request_session(max_retries=0)
 	try:
 		r = session.post(
 			url, headers={"Authorization": f"token {key}:{secret}"}, data=payload, timeout=_TIMEOUT
