@@ -11,6 +11,8 @@ Only stores flagged `route_scans` are proxied to (self-contained ones). HQ-backe
 proxied — their cards are on HQ and resolve locally.
 """
 
+import hashlib
+
 import frappe
 from frappe import _
 from frappe.utils import get_request_session
@@ -42,7 +44,11 @@ def proxy_scan(store, phone, code, full_name=None):
 
 
 def _cb_key(store_name):
-	return f"coupon_gw_cb:{store_name}"
+	# The store id is a URL (contains `://` and `:port`). Frappe's redis cache mishandles keys
+	# with those characters — get_value returns None even though the key is set — so the breaker
+	# would silently never engage. Hash the id to a clean, safe token.
+	digest = hashlib.md5((store_name or "").encode()).hexdigest()
+	return f"coupon_gw_cb:{digest}"
 
 
 def _proxy(store, endpoint, payload):
