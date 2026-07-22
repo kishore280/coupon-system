@@ -323,6 +323,41 @@ def balance(phone):
 			for s in store_ids
 		]
 
+		# Gateway aggregation: a self-contained store's points live only on that store, so HQ proxies
+		# a balance read to each routable store and folds it in as a store-locked bucket — the app
+		# makes ONE call to HQ and sees the full wallet. Only HQ aggregates (a store's balance is a
+		# leaf). The whole block is best-effort: any failure is swallowed and logged so a slow or
+		# broken store can never break the user's balance.
+		try:
+			from coupon_system.hq_client import is_self_contained, is_store
+
+			if not is_store() and not is_self_contained():
+				from frappe.utils import get_url
+
+				from coupon_system.gateway import proxy_balance, routable_stores
+
+				self_url = (get_url() or "").rstrip("/")
+				seen = {r["store"] for r in restricted}
+				for st in routable_stores():
+					# skip stores already counted locally, and never proxy to ourselves — a
+					# self-pointing route would recurse over HTTP forever.
+					if st.name in seen or (st.site_url or "").rstrip("/") == self_url:
+						continue
+					res = proxy_balance(frappe._dict(name=st.name, site_url=st.site_url), phone)
+					if not res.get("success"):
+						continue
+					pts = cint(res.get("points_balance"))
+					if not pts:
+						continue
+					restricted.append({"store": st.name,
+										"store_name": st.store_name or st.name, "points": pts})
+					buckets[st.name] = pts
+					# keep the headline stats reconciled with points_balance across stores
+					total_earned += cint(res.get("total_earned"))
+					total_redeemed += cint(res.get("total_redeemed"))
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Coupon balance aggregation failed")
+
 		ledger_entries = (
 			frappe.qb.from_(CL)
 			.select(CL.type, CL.points, CL.description, CL.site_url, CL.bucket_store,

@@ -43,6 +43,20 @@ def proxy_scan(store, phone, code, full_name=None):
 	return _proxy(store, "scan", {"phone": phone, "code": code, "full_name": full_name or ""})
 
 
+def proxy_balance(store, phone):
+	"""Proxy a balance read to a self-contained store and relay its response (for aggregation)."""
+	return _proxy(store, "balance", {"phone": phone})
+
+
+def routable_stores():
+	"""All self-contained stores HQ proxies to (route_scans on)."""
+	return frappe.get_all(
+		"Coupon Store",
+		filters={"route_scans": 1, "is_active": 1},
+		fields=["name", "site_url", "store_name"],
+	)
+
+
 def _cb_rawkey(store_name):
 	# Full, redis-ready breaker key. The store id is a URL, so hash it to a clean token, then
 	# run it through make_key for the site prefix.
