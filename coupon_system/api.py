@@ -303,18 +303,29 @@ def balance(phone):
 		# don't reject an unknown-to-HQ phone up front — aggregate the stores first, then decide.
 		local_full_name = frappe.db.get_value("Coupon User", phone, "full_name")
 
+		from frappe.query_builder import Case
+		from frappe.query_builder.functions import Coalesce
+
 		CL = frappe.qb.DocType("Coupon Ledger")
 
-		rows = (
+		# Earnings vs redemptions must exclude reversals: a reversal is a CREDIT tagged with the
+		# reversed invoice_no (an earn/scan CREDIT has none). So `earned` counts only CREDITs
+		# without an invoice_no, and a reversal nets its matching DEBIT back out of `redeemed` —
+		# otherwise a cancelled redemption would leave earned inflated and redeemed overstated.
+		is_reversal = (CL.type == "CREDIT") & CL.invoice_no.isnotnull() & (CL.invoice_no != "")
+		is_earn = (CL.type == "CREDIT") & (CL.invoice_no.isnull() | (CL.invoice_no == ""))
+		t = (
 			frappe.qb.from_(CL)
-			.select(CL.type, Sum(CL.points).as_("total"))
+			.select(
+				Coalesce(Sum(Case().when(is_earn, CL.points).else_(0)), 0).as_("earned"),
+				Coalesce(Sum(Case().when(is_reversal, CL.points).else_(0)), 0).as_("reversals"),
+				Coalesce(Sum(Case().when(CL.type == "DEBIT", CL.points).else_(0)), 0).as_("debits"),
+			)
 			.where(CL.phone == phone)
-			.groupby(CL.type)
 			.run(as_dict=True)
-		)
-		totals = {r.type: cint(r.total) for r in rows}
-		total_earned = totals.get("CREDIT", 0)
-		total_redeemed = totals.get("DEBIT", 0)
+		)[0]
+		total_earned = cint(t.earned)
+		total_redeemed = cint(t.debits) - cint(t.reversals)
 
 		# Partition the wallet into buckets: general (spendable anywhere) + one entry per
 		# store the customer holds locked points at. The app shows the total + this breakdown.
