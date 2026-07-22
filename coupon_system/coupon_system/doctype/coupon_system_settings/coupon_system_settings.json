@@ -11,6 +11,8 @@
   "section_break_withdrawals",
   "enable_withdrawals",
   "points_to_currency_rate",
+  "section_break_deploy",
+  "site_role",
   "architecture_help"
  ],
  "fields": [
@@ -63,6 +65,19 @@
    "fieldname": "points_to_currency_rate",
    "fieldtype": "Float",
    "label": "Points to Currency Rate"
+  },
+  {
+   "fieldname": "section_break_deploy",
+   "fieldtype": "Section Break",
+   "label": "Deployment (HQ / Store)"
+  },
+  {
+   "default": "HQ",
+   "description": "HQ = the central program (manufacturing): owns the ONE central ledger; points spendable anywhere. Store = an HQ-backed store: mints + registers coupons to HQ, points live on HQ locked to this store. Standalone Store = a self-contained store: its own LOCAL ledger, no central HQ - everything within the store (point HQ Integration Settings.hq_url at this site itself for loopback redemption). HQ connection creds come from HQ Integration Settings.",
+   "fieldname": "site_role",
+   "fieldtype": "Select",
+   "label": "Site Role",
+   "options": "HQ\nStore\nStandalone Store"
   }
  ],
  "issingle": 1,

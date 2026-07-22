@@ -23,25 +23,39 @@ frappe.ui.form.on("Coupon Campaign", {
 				],
 				primary_action_label: __("Generate"),
 				primary_action(values) {
+					// A store-owned campaign mints locally AND registers the defs to HQ
+					// (store_mint); a central campaign generates on HQ (generate_cards).
+					const is_store = !!frm.doc.owned_by_store;
 					frappe.call({
-						method: "coupon_system.api.generate_cards",
-						args: {
-							quantity: values.quantity,
-							campaign: frm.doc.name,
-							item_code: values.item_code || null,
-						},
+						method: is_store
+							? "coupon_system.hq_client.store_mint"
+							: "coupon_system.api.generate_cards",
+						args: is_store
+							? { quantity: values.quantity, campaign: frm.doc.name }
+							: {
+									quantity: values.quantity,
+									campaign: frm.doc.name,
+									item_code: values.item_code || null,
+							  },
 						freeze: true,
-						freeze_message: __("Generating cards…"),
+						freeze_message: is_store
+							? __("Minting & registering to HQ…")
+							: __("Generating cards…"),
 						callback(r) {
-							if (r.message && r.message.success) {
+							const m = r.message;
+							if (m && m.success) {
+								const count =
+									m.count != null ? m.count : m.codes ? m.codes.length : 0;
 								frappe.show_alert({
-									message: __("{0} cards generated", [r.message.count]),
+									message: is_store
+										? __("{0} store coupons minted & registered to HQ", [count])
+										: __("{0} cards generated", [count]),
 									indicator: "green",
 								});
 								d.hide();
 							} else {
 								frappe.msgprint(
-									(r.message && r.message.error) || __("Generation failed")
+									(m && m.error) || __("Generation failed")
 								);
 							}
 						},

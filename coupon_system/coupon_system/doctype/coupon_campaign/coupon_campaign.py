@@ -10,6 +10,17 @@ class CouponCampaign(Document):
 			frappe.throw(_("Points must be greater than 0"))
 		if self.validity_months is not None and int(self.validity_months) < 0:
 			frappe.throw(_("Validity (Months) cannot be negative"))
+		# A self-contained store is one local wallet - there is no other store to lock points to -
+		# so owned_by_store is meaningless here. Clear it rather than leaving it set-but-ignored.
+		if self.owned_by_store:
+			from coupon_system.hq_client import is_self_contained
+
+			if is_self_contained():
+				self.owned_by_store = None
+				frappe.msgprint(
+					_("Owned By Store isn't used on a self-contained store — cleared."),
+					indicator="orange", alert=True,
+				)
 
 	def on_update(self):
 		# If the campaign has already ended, retire its unused cards now so the
