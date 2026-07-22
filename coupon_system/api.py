@@ -272,14 +272,24 @@ def scan(phone, code, full_name=None):
 			frappe.db.rollback(save_point="coupon_scan")
 			raise
 
+		locked = card.store if card.get("origin") == "Store" else None
 		return {
 			"success": True,
 			"points_added": points,
-			"locked_to_store": card.store if card.get("origin") == "Store" else None,
+			"locked_to_store": locked,
+			# human store name so the app can say "earned at <Store>", not show a URL
+			"locked_to_store_name": _store_display_name(locked),
 			"new_balance": _get_balance(phone),
 		}
 	except frappe.ValidationError as e:
 		return {"success": False, "error": str(e)}
+
+
+def _store_display_name(store_url):
+	"""Human display name for a store's site_url (falls back to the url if it has no name)."""
+	if not store_url:
+		return None
+	return frappe.db.get_value("Coupon Store", store_url, "store_name") or store_url
 
 
 @frappe.whitelist()
@@ -349,8 +359,9 @@ def balance(phone):
 					pts = cint(res.get("points_balance"))
 					if not pts:
 						continue
-					restricted.append({"store": st.name,
-										"store_name": st.store_name or st.name, "points": pts})
+					# prefer the store's self-reported name, then HQ's registry label, then the url
+					disp = res.get("store_name") or st.store_name or st.name
+					restricted.append({"store": st.name, "store_name": disp, "points": pts})
 					buckets[st.name] = pts
 					# keep the headline stats reconciled with points_balance across stores
 					total_earned += cint(res.get("total_earned"))
@@ -374,6 +385,8 @@ def balance(phone):
 			"success": True,
 			"phone": phone,
 			"full_name": user.full_name,
+			# this site's own store display name, so a store's app / HQ aggregation can label buckets
+			"store_name": _store_display_name(frappe.utils.get_url()),
 			"points_balance": sum(buckets.values()),
 			"general": general,
 			"restricted": restricted,
