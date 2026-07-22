@@ -73,7 +73,12 @@ def _proxy(store, endpoint, payload):
 		r.raise_for_status()
 	except Exception as e:
 		frappe.cache().set_value(_cb_key(store.name), "1", expires_in_sec=_CB_COOLDOWN)
-		frappe.log_error(f"{store.name}: {e}", "Coupon gateway proxy failed")
+		# title has a hard length cap; the (long) upstream error must go in `message`, and logging
+		# itself must never break the proxy — so keep the title short and swallow any log failure.
+		try:
+			frappe.log_error(message=f"{store.name}: {e}", title="Coupon gateway proxy failed")
+		except Exception:
+			pass
 		return {"success": False, "reason": "store_unreachable",
 				"error": _("Could not reach the store, please retry")}
 

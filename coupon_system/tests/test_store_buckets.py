@@ -300,3 +300,36 @@ class TestStoreBuckets(FrappeTestCase):
 		res = scan(self.phone, "GHOST-1234-5678")
 		self.assertFalse(res["success"])
 		self.assertIn("not found", res["error"].lower())
+
+	def test_proxy_failure_with_long_error_returns_unreachable_not_raises(self):
+		# Regression: a long upstream error must not blow up log_error (title length cap) and escape
+		# _proxy as a 500 — it must return a clean store_unreachable and trip the breaker.
+		from coupon_system import gateway
+
+		name = ensure_store(_STORE_RT, "RT1 Store", _NS_RT, route_scans=1)
+		store = frappe.get_doc("Coupon Store", name)
+		store.service_api_key = "svc-key"
+		store.service_secret = "svc-secret"
+		store.save(ignore_permissions=True)
+
+		long_err = "connection refused " * 20  # > 140 chars, like a real urllib3 pool error
+
+		class _BoomSession:
+			def post(self, *a, **k):
+				raise Exception(long_err)
+
+		frappe.cache().delete_value(gateway._cb_key(name))
+		with patch("coupon_system.gateway.get_request_session", return_value=_BoomSession()):
+			res = gateway._proxy(
+				frappe._dict(name=name, site_url=_STORE_RT, code_namespace=_NS_RT),
+				"scan", {"phone": self.phone, "code": f"{_NS_RT}-AAAA-BBBB", "full_name": ""},
+			)
+			self.assertFalse(res["success"])
+			self.assertEqual(res["reason"], "store_unreachable")
+			# breaker now open -> a second call fast-fails as store_unavailable
+			res2 = gateway._proxy(
+				frappe._dict(name=name, site_url=_STORE_RT, code_namespace=_NS_RT),
+				"scan", {"phone": self.phone, "code": f"{_NS_RT}-AAAA-BBBB", "full_name": ""},
+			)
+			self.assertEqual(res2["reason"], "store_unavailable")
+		frappe.cache().delete_value(gateway._cb_key(name))
