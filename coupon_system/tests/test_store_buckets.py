@@ -318,7 +318,7 @@ class TestStoreBuckets(FrappeTestCase):
 			def post(self, *a, **k):
 				raise Exception(long_err)
 
-		frappe.cache().delete_value(gateway._cb_key(name))
+		frappe.cache().delete(gateway._cb_rawkey(name))
 		with patch("coupon_system.gateway.get_request_session", return_value=_BoomSession()):
 			res = gateway._proxy(
 				frappe._dict(name=name, site_url=_STORE_RT, code_namespace=_NS_RT),
@@ -332,4 +332,4 @@ class TestStoreBuckets(FrappeTestCase):
 				"scan", {"phone": self.phone, "code": f"{_NS_RT}-AAAA-BBBB", "full_name": ""},
 			)
 			self.assertEqual(res2["reason"], "store_unavailable")
-		frappe.cache().delete_value(gateway._cb_key(name))
+		frappe.cache().delete(gateway._cb_rawkey(name))

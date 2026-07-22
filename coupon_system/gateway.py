@@ -43,18 +43,34 @@ def proxy_scan(store, phone, code, full_name=None):
 	return _proxy(store, "scan", {"phone": phone, "code": code, "full_name": full_name or ""})
 
 
-def _cb_key(store_name):
-	# The store id is a URL (contains `://` and `:port`). Frappe's redis cache mishandles keys
-	# with those characters — get_value returns None even though the key is set — so the breaker
-	# would silently never engage. Hash the id to a clean, safe token.
+def _cb_rawkey(store_name):
+	# Full, redis-ready breaker key. The store id is a URL, so hash it to a clean token, then
+	# run it through make_key for the site prefix.
 	digest = hashlib.md5((store_name or "").encode()).hexdigest()
-	return f"coupon_gw_cb:{digest}"
+	return frappe.cache().make_key(f"coupon_gw_cb:{digest}")
+
+
+def _cb_open(store_name):
+	"""Is the breaker tripped for this store? Uses the RAW redis client on purpose (see _cb_trip)."""
+	return bool(frappe.cache().get(_cb_rawkey(store_name)))
+
+
+def _cb_trip(store_name):
+	"""Trip the breaker for _CB_COOLDOWN seconds.
+
+	Deliberately uses the raw redis client (setex/get) rather than frappe.cache().set_value/
+	get_value: the wrapper keeps a per-request in-process cache layer that DESYNCS from redis right
+	after a failed outbound `requests` call — so a value written here via set_value is invisible to
+	a get_value in the same call, and the breaker would silently never engage. The raw client always
+	hits redis, so it's correct in-process (tests, console) and in a web request alike.
+	"""
+	frappe.cache().setex(_cb_rawkey(store_name), _CB_COOLDOWN, "1")
 
 
 def _proxy(store, endpoint, payload):
 	# Circuit breaker: if this store just failed, fail fast instead of hanging every scan on a
 	# dead upstream (Azure Gateway Routing risk: gateway in the data path — bulkhead each store).
-	if frappe.cache().get_value(_cb_key(store.name)):
+	if _cb_open(store.name):
 		return {"success": False, "reason": "store_unavailable",
 				"error": _("Store is temporarily unavailable, please retry")}
 
@@ -78,7 +94,7 @@ def _proxy(store, endpoint, payload):
 		)
 		r.raise_for_status()
 	except Exception as e:
-		frappe.cache().set_value(_cb_key(store.name), "1", expires_in_sec=_CB_COOLDOWN)
+		_cb_trip(store.name)
 		# title has a hard length cap; the (long) upstream error must go in `message`, and logging
 		# itself must never break the proxy — so keep the title short and swallow any log failure.
 		try:
