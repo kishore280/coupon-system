@@ -299,10 +299,9 @@ def balance(phone):
 		if not ({"System Manager", "Coupon Manager", "Coupon Mobile"} & set(roles)):
 			frappe.throw(_("Not permitted"))
 
-		if not frappe.db.exists("Coupon User", phone):
-			frappe.throw(_("User not found"))
-
-		user = frappe.get_doc("Coupon User", phone)
+		# The customer may exist ONLY at a self-contained store (never scanned a central coupon), so
+		# don't reject an unknown-to-HQ phone up front — aggregate the stores first, then decide.
+		local_full_name = frappe.db.get_value("Coupon User", phone, "full_name")
 
 		CL = frappe.qb.DocType("Coupon Ledger")
 
@@ -332,6 +331,7 @@ def balance(phone):
 			{"store": s, "store_name": names.get(s) or s, "points": buckets[s]}
 			for s in store_ids
 		]
+		store_full_name = None  # captured from a store when HQ has no record of this phone
 
 		# Gateway aggregation: a self-contained store's points live only on that store, so HQ proxies
 		# a balance read to each routable store and folds it in as a store-locked bucket — the app
@@ -364,6 +364,8 @@ def balance(phone):
 						continue
 					# prefer the store's self-reported name, then HQ's registry label, then the url
 					disp = res.get("store_name") or st.store_name or st.name
+					if not store_full_name and res.get("full_name"):
+						store_full_name = res.get("full_name")
 					restricted.append({"store": st.name, "store_name": disp, "points": pts})
 					buckets[st.name] = pts
 					# keep the headline stats reconciled with points_balance across stores
@@ -371,6 +373,11 @@ def balance(phone):
 					total_redeemed += cint(res.get("total_redeemed"))
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Coupon balance aggregation failed")
+
+		full_name = local_full_name or store_full_name or phone
+		# Genuinely unknown only if HQ has no record AND no store held any points for them.
+		if not local_full_name and sum(buckets.values()) == 0:
+			return {"success": False, "error": _("User not found")}
 
 		ledger_entries = (
 			frappe.qb.from_(CL)
@@ -387,7 +394,7 @@ def balance(phone):
 		return {
 			"success": True,
 			"phone": phone,
-			"full_name": user.full_name,
+			"full_name": full_name,
 			# this site's own store display name, so a store's app / HQ aggregation can label buckets
 			"store_name": _store_display_name(frappe.utils.get_url()),
 			"points_balance": sum(buckets.values()),
