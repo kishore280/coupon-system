@@ -12,6 +12,9 @@ proxied — their cards are on HQ and resolve locally.
 """
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import requests
 
 import frappe
 from frappe import _
@@ -20,6 +23,8 @@ from frappe.utils.password import get_decrypted_password
 
 _TIMEOUT = 10
 _CB_COOLDOWN = 30  # seconds a store stays "tripped" after a failure (lightweight circuit breaker)
+_BALANCE_TIMEOUT = 5  # a wallet read must not hang on one slow store — shorter than a scan
+_MAX_FANOUT = 8  # bulkhead: cap concurrent store balance reads per request
 
 
 def route_store_for_code(code):
@@ -55,6 +60,57 @@ def routable_stores():
 		filters={"route_scans": 1, "is_active": 1},
 		fields=["name", "site_url", "store_name"],
 	)
+
+
+def proxy_balance_many(stores, phone):
+	"""Fan out balance reads to several self-contained stores CONCURRENTLY.
+
+	Returns {store_name: relayed_message_dict} for the stores that answered. Creds and the circuit
+	breaker are read here in the main thread; only the HTTP POSTs run in worker threads (they touch
+	no frappe context), so a slow store can't block the others and the whole fan-out costs about one
+	round-trip instead of K. Breaker-open stores are skipped; failures trip the breaker + log, and
+	are simply absent from the result (best-effort — never raises).
+	"""
+	jobs = []
+	for st in stores:
+		if _cb_open(st.name):
+			continue
+		key = frappe.db.get_value("Coupon Store", st.name, "service_api_key")
+		secret = get_decrypted_password(
+			"Coupon Store", st.name, "service_secret", raise_exception=False
+		)
+		if not (st.get("site_url") and key and secret):
+			continue
+		url = f"{st.site_url.rstrip('/')}/api/method/coupon_system.api.balance"
+		headers = {"Authorization": f"token {key}:{secret}"}
+		jobs.append((st.name, url, headers))
+
+	if not jobs:
+		return {}
+
+	def _fetch(url, headers):
+		# plain requests in the worker — no frappe.local here; single attempt, short timeout.
+		r = requests.post(url, headers=headers, data={"phone": phone}, timeout=_BALANCE_TIMEOUT)
+		r.raise_for_status()
+		return r.json().get("message") or {}
+
+	out, failed = {}, []
+	with ThreadPoolExecutor(max_workers=min(_MAX_FANOUT, len(jobs))) as ex:
+		futures = {ex.submit(_fetch, url, headers): name for (name, url, headers) in jobs}
+		for fut in as_completed(futures):
+			name = futures[fut]
+			try:
+				out[name] = fut.result()
+			except Exception as e:
+				failed.append((name, e))
+
+	for name, e in failed:
+		_cb_trip(name)
+		try:
+			frappe.log_error(message=f"{name}: {e}", title="Coupon balance aggregation proxy failed")
+		except Exception:
+			pass
+	return out
 
 
 def _cb_rawkey(store_name):

@@ -344,17 +344,20 @@ def balance(phone):
 			if not is_store() and not is_self_contained():
 				from frappe.utils import get_url
 
-				from coupon_system.gateway import proxy_balance, routable_stores
+				from coupon_system.gateway import proxy_balance_many, routable_stores
 
 				self_url = (get_url() or "").rstrip("/")
 				seen = {r["store"] for r in restricted}
-				for st in routable_stores():
-					# skip stores already counted locally, and never proxy to ourselves — a
-					# self-pointing route would recurse over HTTP forever.
-					if st.name in seen or (st.site_url or "").rstrip("/") == self_url:
-						continue
-					res = proxy_balance(frappe._dict(name=st.name, site_url=st.site_url), phone)
-					if not res.get("success"):
+				# skip stores already counted locally, and never proxy to ourselves — a
+				# self-pointing route would recurse over HTTP forever.
+				stores = [
+					st for st in routable_stores()
+					if st.name not in seen and (st.site_url or "").rstrip("/") != self_url
+				]
+				balances = proxy_balance_many(stores, phone)  # concurrent, best-effort
+				for st in stores:
+					res = balances.get(st.name)
+					if not res or not res.get("success"):
 						continue
 					pts = cint(res.get("points_balance"))
 					if not pts:
