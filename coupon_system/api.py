@@ -608,6 +608,19 @@ def generate_cards(quantity, campaign, item_code=None, naming_series=None,
 		if "System Manager" not in roles and "Coupon Manager" not in roles:
 			frappe.throw(_("Not permitted"))
 
+		# On a self-contained store the campaign has no owned_by_store, so the desk "Generate Cards"
+		# button falls to this (central) path. Upgrade it to a store mint when this site has a local
+		# Coupon Store namespace, so codes are namespaced (routable by the HQ gateway) and the points
+		# lock to this store — matching store_mint. A standalone store with no namespace stays a plain
+		# central/general wallet.
+		if origin == "Central" and not store:
+			from coupon_system.hq_client import is_self_contained, store_id
+
+			if is_self_contained():
+				sid = store_id()
+				if sid and frappe.db.get_value("Coupon Store", sid, "code_namespace"):
+					origin, store = "Store", sid
+
 		qty, pts, expiry = _validate_campaign_row({"quantity": quantity, "campaign": campaign})
 
 		return _generate_batch(
