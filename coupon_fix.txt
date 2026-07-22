@@ -42,12 +42,12 @@ COUPON SYSTEM - FIX LIST
      Once points are credited to a phone's balance they are fungible and can be spent
      anywhere via redeem()'s no-code balance-only branch - store restriction does not
      follow the points after they're earned.
-   - [DEPLOYED 2026-07-14] Applied via `bench --site oxifixprivateltd.com migrate`,
-     Oxifixprivateltd site process restarted. 8 new tests added to test_coupon_card.py
+   - [DEPLOYED 2026-07-14] Applied via `bench --site <HQ-SITE> migrate`,
+     HQ site process restarted. 8 new tests added to test_coupon_card.py
      (missing/type-confused site_url, unrestricted-any-store, correct-store-allowed,
      wrong-store-blocked, live-restriction-change, balance-redeem-ignores-restriction).
      Full coupon_system test suite (54 tests across all test files) passes:
-     `bench --site oxifixprivateltd.com run-tests --module <module> --skip-before-tests`
+     `bench --site <HQ-SITE> run-tests --module <module> --skip-before-tests`
      (--skip-before-tests needed - unrelated india_compliance/erpnext fixture gaps on
      this site break the default before_tests hook; not caused by this change).
 
@@ -73,7 +73,7 @@ COUPON SYSTEM - FIX LIST
    customer self-service like scan()/balance(), so "Coupon Mobile" was deliberately
    left out). Regression test added: test_redeem_permission_denied_without_role
    (creates a roleless test user, calls redeem() as that user via self.set_user(),
-   asserts it's rejected). Deployed - Oxifixprivateltd site process restarted (code-only
+   asserts it's rejected). Deployed - HQ site process restarted (code-only
    change, no schema migration needed). Full suite (56 tests) passes.
 
 6. [ADDED 2026-07-14] Extracted _post_ledger(phone, entry_type, points, description,
@@ -216,13 +216,12 @@ COUPON SYSTEM - FIX LIST
    - [OPERATIONAL] Before deploying, checked get_url() (used by
      oxifix_multisite_sync/coupon_hooks.py to build the site_url sent to redeem()) for
      every real branch site. Found it's NOT stable per-site without host_name configured
-     in site_config.json - oxifixretail1.com's one real historical redemption recorded
+     in site_config.json - one store's one real historical redemption recorded
      `http://<server-ip>:8020` (direct IP:port) while calling get_url() for the same
-     site now (no live request context) returns `http://oxifixretail1.com` (domain form).
-     Registered BOTH known forms for oxifixretail1 as separate Coupon Store records to
+     site now (no live request context) returns `http://<store-site>` (domain form).
+     Registered BOTH known forms for that store as separate Coupon Store records to
      avoid breaking anything, plus the current get_url() value for every other real
-     branch (oxifix.com, oxifixdemo.com, oxifixinframart.com, oxifixretail.com,
-     oxifixprivateltd.com's IP:port form, and its salem.oxifixinframart.com public
+     branch (each branch's domain form, plus the HQ's IP:port form and its public
      domain). [STILL OPEN] Root-cause fix is to set host_name in site_config.json for
      each branch so get_url() always returns one stable value - not done yet, worth
      doing before this is relied on heavily, since a branch could still send a THIRD

@@ -34,19 +34,19 @@ Running the tests needs the `route_scans` column on the site, i.e. a migrate of 
 site — denied as a production deploy I wasn't authorized to run unattended. Run when back:
 
 ```bash
-ssh oxifix
+ssh <bench-host>
 cd ~/frappe-bench
-bench --site oxifixprivateltd.com migrate                     # picks up route_scans
-bench --site oxifixprivateltd.com run-tests \
-  --module coupon_system.tests.test_store_buckets             # the 4 new gateway tests + rest
+bench --site <HQ-SITE> migrate                     # picks up route_scans
+bench --site <HQ-SITE> run-tests \
+  --module coupon_system.tests.test_store_buckets  # the 4 new gateway tests + rest
 ```
 
-Then a live end-to-end (HQ `oxifixprivateltd.com` → self-contained `oxifixretail1.com`):
-1. On HQ, set the `Coupon Store` row for `oxifixretail1.com`: `route_scans = 1`, and confirm
+Then a live end-to-end (HQ `<HQ-SITE>` → self-contained `<STORE-SITE>`):
+1. On HQ, set the `Coupon Store` row for `<STORE-SITE>`: `route_scans = 1`, and confirm
    `service_api_key`/`service_secret` are a Coupon Mobile/Manager user **on the store**.
-2. Mint a card on the store (namespaced code, e.g. `R1-…`).
+2. Mint a card on the store (namespaced code, e.g. `<NS>-…`).
 3. Call HQ `scan(phone, "<that code>")` with the **mobile** creds → expect the store's result
-   relayed (`success:true`, `locked_to_store = http://…retail1…`).
+   relayed (`success:true`, `locked_to_store = <STORE-SITE>`).
 4. Stop the store site → scan again → expect `{success:false, reason:"store_unreachable"}`, and a
    fast-fail `store_unavailable` within the 30s breaker window.
 
