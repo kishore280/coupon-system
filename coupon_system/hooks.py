@@ -126,7 +126,7 @@ scheduler_events = {
 # Uninstallation
 # ------------
 
-# before_uninstall = "coupon_system.uninstall.before_uninstall"
+before_uninstall = "coupon_system.uninstall.before_uninstall"
 # after_uninstall = "coupon_system.uninstall.after_uninstall"
 
 # Integration Setup
