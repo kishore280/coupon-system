@@ -96,6 +96,78 @@ class TestGetMyStores(unittest.TestCase):
 		self.assertNotIn("access_token", out["stores"][0])
 
 	@patch("coupon_system.hq_api.get_request_session")
+	def test_list_only_skips_the_broker_fan_out(self, mock_get_session):
+		"""broker=0 is the every-load path: return the store list from HQ's own DB
+		WITHOUT minting a token per store. The whole point is that it never touches
+		a store, so the app can call it every load cheaply."""
+		session = _mock_session(post_return=_ok_response({"access_token": "nope"}))
+		mock_get_session.return_value = session
+
+		out = self._as_user(lambda: get_my_stores(broker=0))
+
+		self.assertEqual(len(out["stores"]), 1)
+		self.assertEqual(out["stores"][0]["store"], self.site_url)
+		self.assertTrue(out["stores"][0]["available"])
+		self.assertNotIn("access_token", out["stores"][0])
+		# The make-or-break: no store was contacted.
+		session.post.assert_not_called()
+
+	@patch("coupon_system.hq_api.get_request_session")
+	def test_list_only_still_enforces_the_block(self, mock_get_session):
+		"""The block gate runs before the mint either way — so the cheap list-only
+		path a blocked partner hits every load still cuts them off. If this ever
+		regresses, HQ has stopped being the enforcement point and the whole design
+		is unsafe."""
+		session = _mock_session(post_return=_ok_response({}))
+		mock_get_session.return_value = session
+
+		block = frappe.get_doc(
+			{"doctype": "Blocked Partner", "user": self.user}
+		).insert(ignore_permissions=True)
+		try:
+			out = self._as_user(lambda: get_my_stores(broker=0))
+			self.assertEqual(out["code"], "account_suspended")
+			self.assertEqual(out["stores"], [])
+			session.post.assert_not_called()
+		finally:
+			frappe.delete_doc("Blocked Partner", block.name, force=True)
+
+	@patch("coupon_system.hq_api.get_request_session")
+	def test_targeted_stores_narrows_the_mint(self, mock_get_session):
+		"""broker=1 with stores=[one] re-mints only that store — the on-demand
+		re-broker after a single store's token was revoked, not a full fan-out."""
+		other_url = "https://otherstore.example.com"
+		if not frappe.db.exists("Coupon Store", other_url):
+			s = frappe.new_doc("Coupon Store")
+			s.store_name = "Other Store HQ"
+			s.site_url = other_url
+			s.is_active = 1
+			s.service_api_key = "svc_key2"
+			s.service_secret = "svc_secret2"
+			s.insert(ignore_permissions=True)
+		if not frappe.db.exists(
+			"Partner Store Link", {"user": self.user, "store": other_url}
+		):
+			link = frappe.new_doc("Partner Store Link")
+			link.user = self.user
+			link.store = other_url
+			link.status = "Active"
+			link.insert(ignore_permissions=True)
+
+		session = _mock_session(
+			post_return=_ok_response({"access_token": "a1", "refresh_token": "r1"})
+		)
+		mock_get_session.return_value = session
+
+		out = self._as_user(
+			lambda: get_my_stores(broker=1, stores=[self.site_url])
+		)
+
+		# Only the targeted store comes back, and only it was contacted.
+		self.assertEqual([s["store"] for s in out["stores"]], [self.site_url])
+		self.assertEqual(session.post.call_count, 1)
+
+	@patch("coupon_system.hq_api.get_request_session")
 	def test_phoneless_user_is_rejected_before_any_store(self, mock_get_session):
 		session = _mock_session(post_return=_ok_response({}))
 		mock_get_session.return_value = session
