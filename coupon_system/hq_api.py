@@ -84,9 +84,24 @@ _SKIP_FIELDS = (
 
 
 @frappe.whitelist()
-def get_my_stores():
-	"""Return the stores the logged-in user partners in, each with a freshly
-	brokered token for that store.
+def get_my_stores(broker=1, stores=None):
+	"""Return the stores the logged-in user partners in.
+
+	Two modes, one block gate. The block check + mobile check + Active-link query
+	run identically either way — HQ stays the single enforcement point on every
+	call, which is why the app can call the cheap mode every load and still be cut
+	off the instant it's blocked.
+
+	  - broker falsy: list only — {store, store_name, site_url, available}, NO
+	    token mint. The app calls this every load and connects with the per-store
+	    token it already persisted (self-refreshing directly against the store).
+	    This is the scaling path: HQ does DB reads only, no fan-out to stores.
+	  - broker truthy: list + a freshly brokered token per store (today's
+	    behavior). The app asks for this only when it has no persisted token for a
+	    store — cold start, or after a store revoked one (fresh_dio clears the
+	    dead token from storage, so it shows up absent on the next load). `stores`
+	    optionally narrows the mint to specific Coupon Store docnames, so a single
+	    revoked store is re-minted on its own instead of fanning out to all.
 	"""
 	user = frappe.session.user
 	if not user or user == "Guest":
@@ -100,11 +115,16 @@ def get_my_stores():
 		frappe.throw(_("Add your mobile number to access your stores."))
 
 	# A blocked partner is fully out — no stores, no brokered tokens — regardless
-	# of how many stores they're enrolled in. Enrollments (Partner Store Link)
-	# are left untouched, so lifting the block restores them exactly as before.
+	# of how many stores they're enrolled in. Runs BEFORE the mint fan-out, so the
+	# cheap list-only path enforces the block just as the broker path does.
+	# Enrollments (Partner Store Link) are left untouched, so lifting the block
+	# restores them exactly as before.
 	blocked = _blocked_payload(user)
 	if blocked:
 		return blocked
+
+	broker = frappe.utils.cint(broker)
+	wanted = _wanted_stores(stores)
 
 	links = frappe.get_all(
 		"Partner Store Link",
@@ -116,6 +136,8 @@ def get_my_stores():
 	# threads below do HTTP only — never touch frappe/DB (not thread-safe).
 	jobs = []
 	for link in links:
+		if wanted is not None and link.store not in wanted:
+			continue
 		store = frappe.get_doc("Coupon Store", link.store)
 		if not store.is_active:
 			continue
@@ -134,6 +156,22 @@ def get_my_stores():
 
 	if not jobs:
 		return {"stores": []}
+
+	# List-only: skip the fan-out entirely. Every active enrolled store is
+	# `available` — reachability is the app's problem to discover with its own
+	# persisted token, not something HQ mints to prove here.
+	if not broker:
+		return {
+			"stores": [
+				{
+					"store": job["store"],
+					"store_name": job["store_name"],
+					"site_url": job["site_url"],
+					"available": True,
+				}
+				for job in jobs
+			]
+		}
 
 	# One retrying session (thread-safe) shared across the workers — auto-retries
 	# transient failures (connection errors / HTTP 500) before giving up.
@@ -154,6 +192,7 @@ def get_my_stores():
 			tok = result["tokens"]
 			entry.update(
 				{
+					"available": True,
 					"access_token": tok.get("access_token"),
 					"refresh_token": tok.get("refresh_token"),
 					"expires_in": tok.get("expires_in"),
@@ -161,6 +200,7 @@ def get_my_stores():
 				}
 			)
 		else:
+			entry["available"] = False
 			entry["error"] = "unavailable"
 			# Log the real reason neatly to the Error Log doctype (workers don't
 			# touch the DB, so we log here on the main thread).
@@ -175,6 +215,23 @@ def get_my_stores():
 		stores.append(entry)
 
 	return {"stores": stores}
+
+
+def _wanted_stores(stores):
+	"""Parse the optional `stores` arg into a set of Coupon Store docnames to
+	narrow a targeted re-mint to, or None for "all enrolled stores". Frappe hands
+	a list param over the wire as a JSON string, so accept both that and a real
+	list (direct/tests). An empty/blank value means "no filter", not "zero stores"
+	— a caller who wants nothing simply doesn't call.
+	"""
+	if not stores:
+		return None
+	if isinstance(stores, str):
+		stores = frappe.parse_json(stores)
+	if isinstance(stores, str):
+		# A bare, non-JSON string is a single docname.
+		return {stores}
+	return set(stores)
 
 
 def _broker_token(job, session):
