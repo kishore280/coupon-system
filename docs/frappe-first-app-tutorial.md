@@ -8,7 +8,7 @@ Two commands do the typing nobody should be doing by hand:
 
 ```bash
 bench new-app library                   # the whole app skeleton, in one command
-bench --site library.localhost new-doctype  # …or just draw the DocType in the browser
+bench --site mysite.local new-doctype  # …or just draw the DocType in the browser
 ```
 
 What's left after that is the actual work, and it's what this guide is about: **reading** the JSON
@@ -117,7 +117,7 @@ frappe-bench/
 │   └── library/         ← what we write
 ├── sites/
 │   ├── apps.txt
-│   └── library.localhost/
+│   └── mysite.local/
 │       └── site_config.json
 └── env/                 the virtualenv
 ```
@@ -137,15 +137,15 @@ pip install frappe-bench
 bench init frappe-bench --frappe-branch version-16
 cd frappe-bench
 
-bench new-site library.localhost
-bench --site library.localhost add-to-hosts
+bench new-site mysite.local
+bench --site mysite.local add-to-hosts
 ```
 
 Turn on developer mode **before** you touch a DocType:
 
 ```bash
-bench --site library.localhost set-config developer_mode 1
-bench --site library.localhost clear-cache
+bench --site mysite.local set-config developer_mode 1
+bench --site mysite.local clear-cache
 ```
 
 Developer mode is what makes schema edits in the browser get written back to JSON files in your
@@ -154,7 +154,7 @@ database and can never be deployed anywhere.** This is the single setting that t
 into a code generator instead of a dead end. It also gives you real tracebacks.
 
 ```bash
-bench start          # http://library.localhost:8000 — log in as Administrator
+bench start          # http://mysite.local:8000 — log in as Administrator
 ```
 
 ---
@@ -177,8 +177,8 @@ bench new-app library
 Then install it onto the site:
 
 ```bash
-bench --site library.localhost install-app library
-bench --site library.localhost list-apps
+bench --site mysite.local install-app library
+bench --site mysite.local list-apps
 # frappe
 # library
 ```
@@ -374,7 +374,7 @@ That writes `apps/library/library/library/doctype/book/book.json` plus a stub `b
 `__init__.py`. Same result from the CLI if you prefer:
 
 ```bash
-bench --site library.localhost new-doctype "Book" --module Library
+bench --site mysite.local new-doctype "Book" --module Library
 ```
 
 So why does the rest of this section walk through the JSON key by key? Because **the file is the
@@ -600,7 +600,7 @@ Saving in the UI already synced the database. If you edited the JSON by hand, or
 else's changes, run:
 
 ```bash
-bench --site library.localhost migrate
+bench --site mysite.local migrate
 ```
 
 `migrate` reads every DocType JSON in every installed app and reconciles the database to it —
@@ -612,7 +612,7 @@ JSON **is** the migration.
 what you did → commit. Or edit the JSON → `migrate` → refresh. Both directions work, and the file
 is the truth either way. That is why reading it matters.
 
-Open <http://library.localhost:8000/app/book/new>. You have a form with validation, a list view
+Open <http://mysite.local:8000/app/book/new>. You have a form with validation, a list view
 with filters, a REST endpoint, permissions and an audit trail — from one JSON file and six lines of
 Python.
 
@@ -1039,7 +1039,7 @@ a submitted document, which `save()` won't.
 **Behaviour lives on the document.** `mark_returned()` is a method on `Loan`, so the API endpoint,
 the desk button and a future import script all share one implementation. Endpoints should be thin.
 
-Run `bench --site library.localhost migrate` and all five tables exist.
+Run `bench --site mysite.local migrate` and all five tables exist.
 
 ---
 
@@ -1279,7 +1279,7 @@ Rules of thumb:
 ### 9.1 An API user
 
 ```bash
-bench --site library.localhost console
+bench --site mysite.local console
 ```
 
 ```python
@@ -1308,7 +1308,7 @@ request succeeds, and a manual commit mid-request throws away your ability to ro
 ```bash
 KEY=xxxx; SECRET=yyyy
 AUTH="Authorization: token $KEY:$SECRET"
-SITE=http://library.localhost:8000
+SITE=http://mysite.local:8000
 
 curl -s -X POST "$SITE/api/method/library.api.issue_book" \
      -H "$AUTH" -d "member=ada@example.com" -d "book=BK-00001" | jq
@@ -1330,7 +1330,7 @@ forget this constantly.
 ### 9.3 `bench execute`
 
 ```bash
-bench --site library.localhost execute library.api.issue_book \
+bench --site mysite.local execute library.api.issue_book \
       --kwargs "{'member': 'ada@example.com', 'book': 'BK-00001'}"
 ```
 
@@ -1498,7 +1498,7 @@ scheduler_events = {
 
 Two set-up gotchas that waste an hour each:
 
-- **The scheduler is disabled on new sites.** `bench --site library.localhost enable-scheduler`.
+- **The scheduler is disabled on new sites.** `bench --site mysite.local enable-scheduler`.
 - **It runs in a worker**, so `bench start` must be running. Don't wait for a tick to test — call
   the function directly with `bench execute`.
 
@@ -2247,7 +2247,7 @@ fixtures = [
 ```
 
 ```bash
-bench --site library.localhost export-fixtures --app library
+bench --site mysite.local export-fixtures --app library
 ```
 
 That writes `library/fixtures/role.json` and friends. Commit them, and every future `bench migrate`
@@ -2424,9 +2424,9 @@ class TestLoan(IntegrationTestCase):
 Running them:
 
 ```bash
-bench --site library.localhost run-tests --app library
-bench --site library.localhost run-tests --doctype "Loan"
-bench --site library.localhost run-tests --module library.library.doctype.loan.test_loan
+bench --site mysite.local run-tests --app library
+bench --site mysite.local run-tests --doctype "Loan"
+bench --site mysite.local run-tests --module library.library.doctype.loan.test_loan
 ```
 
 Notes that matter:
@@ -2506,14 +2506,14 @@ approver.
 bench start
 
 # terminal 2 — after ANY .json or hooks.py change
-bench --site library.localhost migrate
+bench --site mysite.local migrate
 
 # after a public/ (js, css) change
 bench build --app library
 
 # when something is stale and you can't explain it
-bench --site library.localhost clear-cache
-bench --site library.localhost clear-website-cache
+bench --site mysite.local clear-cache
+bench --site mysite.local clear-website-cache
 ```
 
 ### 21.2 The gotchas
@@ -2646,35 +2646,35 @@ Run this against your own app. Anything unchecked is either deliberately not nee
 ```bash
 # bench / site
 bench init frappe-bench --frappe-branch version-16
-bench new-site library.localhost
-bench --site library.localhost set-config developer_mode 1
-bench --site library.localhost add-to-hosts
-bench --site library.localhost enable-scheduler
+bench new-site mysite.local
+bench --site mysite.local set-config developer_mode 1
+bench --site mysite.local add-to-hosts
+bench --site mysite.local enable-scheduler
 bench start
 
 # apps
 bench get-app apps/library                 # local path, or a git URL
-bench --site library.localhost install-app library
-bench --site library.localhost uninstall-app library
-bench --site library.localhost list-apps
+bench --site mysite.local install-app library
+bench --site mysite.local uninstall-app library
+bench --site mysite.local list-apps
 
 # the daily loop
-bench --site library.localhost migrate     # sync doctypes, run patches, after_migrate
+bench --site mysite.local migrate     # sync doctypes, run patches, after_migrate
 bench build --app library                  # rebuild JS/CSS
 bench watch                                # rebuild on change
-bench --site library.localhost clear-cache
+bench --site mysite.local clear-cache
 bench restart                              # production / --noreload
 
 # running code
-bench --site library.localhost console
-bench --site library.localhost execute library.tasks.flag_overdue_loans
-bench --site library.localhost run-tests --app library
-bench --site library.localhost mariadb
+bench --site mysite.local console
+bench --site mysite.local execute library.tasks.flag_overdue_loans
+bench --site mysite.local run-tests --app library
+bench --site mysite.local mariadb
 
 # data
-bench --site library.localhost export-fixtures --app library
-bench --site library.localhost backup --with-files
-bench --site library.localhost restore <path-to-sql.gz>
+bench --site mysite.local export-fixtures --app library
+bench --site mysite.local backup --with-files
+bench --site mysite.local restore <path-to-sql.gz>
 ```
 
 ### 23.2 Python API
