@@ -1,6 +1,6 @@
 # Building a Frappe app from scratch — a hands-on guide
 
-A complete walkthrough of building a real Frappe v15 app, file by file. In practice you'd run
+A complete walkthrough of building a real Frappe v16 app, file by file. In practice you'd run
 `bench new-app` and draw DocTypes in the browser — and you should; nobody hand-types boilerplate.
 But the generator writes files you then have to *own*, so this guide walks every one of them as if
 it were typed, because reading them is the part that makes you fluent.
@@ -15,6 +15,10 @@ working loyalty-points backend, and every concept has a real counterpart in this
 > organised around the real generate-then-edit workflow, and covers a few things this guide doesn't
 > need (submittable documents, background jobs, email, print formats, workflow). **Use that one to
 > teach.** Use this one to understand how the app in this repo actually works.
+
+**Version:** **Frappe v16** throughout. The app in this repo currently runs on v15, so a few of the
+linked source files still use v15-era APIs — those are called out where they appear, and
+[§22](#22-coming-from-v15) is the full list.
 
 **Audience:** developers who know Python and have seen an ERPNext screen, but have never written a
 Frappe app.
@@ -44,11 +48,12 @@ self-paced reading.
 | 14 | [Reports](#14-reports) | Script Report |
 | 15 | [Roles, permissions, fixtures](#15-roles-permissions-and-fixtures) | Who can do what, shipping records |
 | 16 | [Patches (data migrations)](#16-patches-data-migrations) | `patches.txt` |
-| 17 | [Tests](#17-tests) | `FrappeTestCase`, running them |
+| 17 | [Tests](#17-tests) | `IntegrationTestCase`, running them |
 | 18 | [Dev workflow and gotchas](#18-dev-workflow-and-the-gotchas-that-cost-hours) | The things that waste your afternoon |
 | 19 | [Talking to another site over HTTP](#19-bonus-talking-to-another-site-over-http) | Service creds, `Password` fields |
 | 20 | [Command cheat sheet](#20-command-cheat-sheet) | Everything in one place |
 | 21 | [Demo run-sheet](#21-demo-run-sheet) | How to present this live |
+| 22 | [Coming from v15](#22-coming-from-v15) | What changed, if you're porting |
 
 ---
 
@@ -118,20 +123,21 @@ schema, and Frappe hands you an app.**
 ## 2. Prerequisites: bench and a site
 
 If you already have a bench with a site, skip ahead. Otherwise, briefly (full install docs:
-<https://frappeframework.com/docs/v15/user/en/installation>):
+<https://docs.frappe.io/framework/user/en/installation>):
 
 ```bash
-# system deps: python3.10+, node 18+, redis, mariadb 10.6+, wkhtmltopdf
+# v16 needs: python 3.14 (pinned >=3.14,<3.15), node 24+, redis, mariadb 10.6+,
+# and Chrome/Chromium for PDF generation
 pip install frappe-bench
 
-bench init frappe-bench --frappe-branch version-15
+bench init frappe-bench --frappe-branch version-16
 cd frappe-bench
 
 bench new-site hq.localhost
 bench --site hq.localhost add-to-hosts        # so http://hq.localhost:8000 resolves
 
 # optional but this guide's §10 hooks into ERPNext's Work Order
-bench get-app erpnext --branch version-15
+bench get-app erpnext --branch version-16
 bench --site hq.localhost install-app erpnext
 ```
 
@@ -2323,7 +2329,7 @@ a transaction that's rolled back after each test.
 
 ```python
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, today
 
 from coupon_system.api import balance, generate_cards, redeem, scan
@@ -2364,7 +2370,7 @@ def cleanup_user(phone):
 		frappe.delete_doc("Coupon User", phone, ignore_permissions=True, force=True)
 
 
-class TestCouponCard(FrappeTestCase):
+class TestCouponCard(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
@@ -2435,9 +2441,11 @@ bench --site hq.localhost run-tests --doctype "Coupon Card"
 
 Notes that matter:
 
-- **`FrappeTestCase` wraps each test in a transaction and rolls back.** You still clean up
+- **`IntegrationTestCase` wraps each test in a transaction and rolls back.** You still clean up
   explicitly for anything crossing a test boundary (`setUpClass` fixtures, `frappe.db.delete` in
-  `setUp`) — see `cleanup_user` above.
+  `setUp`) — see `cleanup_user` above. If you override `setUpClass`, call `super().setUpClass()`.
+  (The test files in this repo still use the v15 `FrappeTestCase`; it imports on v16 but is removed
+  in v17, so they need this swap when the site moves.)
 - **Test the API functions directly**, not over HTTP. They're plain Python; call them.
 - **Test the invariants, not the getters.** The five tests above are: live value beats snapshot,
   double-scan rejected, expiry enforced, redeem idempotent, no overspend. Every one of them is a
@@ -2579,7 +2587,7 @@ Full design: [`docs/api-scan-gateway.md`](api-scan-gateway.md) and
 
 ```bash
 # ── bench / site
-bench init frappe-bench --frappe-branch version-15
+bench init frappe-bench --frappe-branch version-16
 bench new-site hq.localhost
 bench --site hq.localhost set-config developer_mode 1
 bench --site hq.localhost add-to-hosts
@@ -2700,4 +2708,59 @@ Once the core makes sense, the production app extends it in three directions —
   gotchas that cost hours on a live site.
   → [`docs/operations.md`](operations.md), [`docs/store-mode-setup.md`](store-mode-setup.md)
 
-Official docs: <https://frappeframework.com/docs/v15>.
+Official docs: <https://docs.frappe.io/framework>.
+
+---
+
+## 22. Coming from v15
+
+This guide is v16 throughout. The app in this repo still runs on v15, so if you're reading its source
+alongside, these are the places the two diverge — and the list you'd work through to move a real app
+across. The framework's shape is unchanged: DocTypes, hooks, controllers, whitelisting, the query
+builder and the desk API all behave as described here.
+
+**Environment**
+
+| | v15 | v16 |
+|---|---|---|
+| Python | 3.10+ | **3.14**, pinned `>=3.14,<3.15` |
+| Node | 18+ | **24+** |
+| PDF | wkhtmltopdf | Chrome/Chromium, selectable in Print Settings |
+| Desk route | `/app` | `/desk` (`/app` redirects; `/apps` deprecated) |
+
+**What this codebase would need**
+
+- **§17 tests.** `coupon_system/tests/*` and the per-DocType `test_*.py` files import
+  `FrappeTestCase` from `frappe.tests.utils`. On v16 that's `from frappe.tests import
+  IntegrationTestCase` (everything here touches the database, so it's `IntegrationTestCase`, not
+  `UnitTestCase`). Module-level `test_dependencies` → `EXTRA_TEST_RECORD_DEPENDENCIES`; any
+  `setUpClass` override must call `super().setUpClass()`.
+- **Implicit ordering.** v16 defaults `frappe.get_all`, `get_list`, `db.get_value`, `db.get_values`
+  and `qb.get_query` to `creation desc` instead of `modified desc`. The ledger read in `balance()`
+  already passes an explicit `.orderby(CL.timestamp, order=Order.desc)` — that's the pattern to
+  copy. Audit every other list read for a silent dependency on `modified`.
+- **DocType `sort_field`.** The JSONs here set `"sort_field": "modified"` explicitly, so their list
+  views keep v15 behaviour on v16. That's a decision to make deliberately, not a default to inherit.
+- **`has_permission` hooks must return `True` explicitly** — `None` no longer grants permission.
+  This app doesn't use that hook, but anything you've bolted on beside it might.
+- **`frappe.db.commit()` inside a document hook is unsupported.** `install.py::_create_mobile_user`
+  commits, which is fine — it runs from an install hook, not a document hook — but audit the
+  distinction rather than assuming.
+- **`frappe.flags.in_test`** → `frappe.in_test`.
+- **`frappe.sendmail(..., now=True)`** no longer commits.
+- **`override_doctype` classes** must inherit from the class they override.
+- **POST now required** for `logout`, `web_logout`, `upload_file`, `send_login_link`.
+
+**Unaffected**
+
+The gateway and store-mode machinery (§19) needs nothing: it's plain HTTP with token auth via
+`get_request_session`, and none of that changed. The `Password` fieldtype and
+`get_decrypted_password` are unchanged. `frappe.qb` is unchanged. The scan/redeem/ledger logic is
+pure application code.
+
+**Also moved out of core in v16:** Energy Points, Newsletter, Blog, Backup Integrations are separate
+apps now. GeoIP and the Transaction Log DocType are gone. Modified *standard* workspaces get
+overwritten on migrate — back them up first.
+
+The official migration guide is the authority:
+<https://github.com/frappe/frappe/wiki/Migrating-to-version-16>.

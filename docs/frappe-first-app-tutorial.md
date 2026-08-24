@@ -1,6 +1,6 @@
 # Your first Frappe app — a complete, simple walkthrough
 
-Build a whole Frappe v15 app the way people actually build them: **let the tools generate the
+Build a whole Frappe v16 app the way people actually build them: **let the tools generate the
 boilerplate, then write the parts that carry real decisions.** The example is small enough to finish
 in an hour — a **library**. Books, members, loans. That's it.
 
@@ -31,6 +31,8 @@ part of a Frappe app that a real one needs:
 
 **Assumes:** you know Python, you've seen a Frappe or ERPNext screen once. Nothing else.
 **Needs:** no ERPNext. Plain Frappe is enough.
+**Version:** **Frappe v16** throughout — the current release, supported to 2029. Coming from a v15
+app? [§24](#24-coming-from-v15) lists what changed.
 
 ---
 
@@ -62,6 +64,7 @@ part of a Frappe app that a real one needs:
 | 21 | [Dev workflow and gotchas](#21-dev-workflow-and-gotchas) | What wastes your afternoon |
 | 22 | [The completeness checklist](#22-the-completeness-checklist) | **Does my app have everything?** |
 | 23 | [Cheat sheet + run-sheet](#23-cheat-sheet-and-run-sheet) | Commands, and how to demo it |
+| 24 | [Coming from v15](#24-coming-from-v15) | What changed, if you're porting |
 
 ---
 
@@ -124,13 +127,14 @@ frappe-bench/
 ## 2. Getting a bench and a site
 
 Skip if you have one. Otherwise (full docs:
-<https://frappeframework.com/docs/v15/user/en/installation>):
+<https://docs.frappe.io/framework/user/en/installation>):
 
 ```bash
-# needs python3.10+, node 18+, redis, mariadb 10.6+, wkhtmltopdf
+# v16 needs: python 3.14 (pinned >=3.14,<3.15), node 24+, redis, mariadb 10.6+,
+# and Chrome/Chromium for PDF generation
 pip install frappe-bench
 
-bench init frappe-bench --frappe-branch version-15
+bench init frappe-bench --frappe-branch version-16
 cd frappe-bench
 
 bench new-site library.localhost
@@ -523,7 +527,7 @@ against what follows.
   }
  ],
  "search_fields": "title,isbn",
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC",
  "title_field": "title",
  "track_changes": 1
@@ -694,7 +698,7 @@ you save yourself a join forever. Otherwise use a series.
   {"role": "System Manager", "create": 1, "read": 1, "write": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "report": 1, "share": 1}
  ],
  "search_fields": "full_name,phone",
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC",
  "title_field": "full_name",
  "track_changes": 1
@@ -753,7 +757,7 @@ cache you can rebuild.
  "name": "Book Author",
  "owner": "Administrator",
  "permissions": [],
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC"
 }
 ```
@@ -822,7 +826,7 @@ values live in `tabSingles` as key/value pairs. Every app ships one.
  "permissions": [
   {"role": "System Manager", "create": 1, "read": 1, "write": 1, "delete": 0}
  ],
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC",
  "track_changes": 1
 }
@@ -923,7 +927,7 @@ time a record represents *something that happened*, and rebuild it out of a `Sel
    "email": 1, "export": 1, "print": 1, "report": 1, "share": 1
   }
  ],
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC",
  "track_changes": 1
 }
@@ -1511,7 +1515,7 @@ frappe.enqueue(
 	queue="long",           # "short" (default), "default", "long"
 	timeout=1500,
 	job_name="catalogue-rebuild",
-	now=frappe.flags.in_test,   # run inline during tests so assertions can see the result
+	now=frappe.in_test,         # run inline during tests so assertions can see the result
 	member=member,              # any extra kwargs are passed to the function
 )
 ```
@@ -2311,7 +2315,7 @@ transaction that's rolled back after each test.
 
 ```python
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, today
 
 from library.api import issue_book, member_summary, return_book
@@ -2339,7 +2343,7 @@ def make_member(email="test.member@example.com", active=1):
 	return member
 
 
-class TestLoan(FrappeTestCase):
+class TestLoan(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self.member = make_member()
@@ -2411,6 +2415,12 @@ class TestLoan(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("Book", self.book.name, "status"), "Available")
 ```
 
+> **Which base class?** `IntegrationTestCase` for anything that creates, queries or saves a
+> document — which is nearly everything, including tests that only make an empty DocType stub.
+> `UnitTestCase` is for pure in-memory logic that never touches the database. (The old
+> `frappe.tests.utils.FrappeTestCase` still imports on v16 but is deprecated and disappears in v17 —
+> don't start new tests on it.)
+
 Running them:
 
 ```bash
@@ -2421,8 +2431,12 @@ bench --site library.localhost run-tests --module library.library.doctype.loan.t
 
 Notes that matter:
 
-- **`FrappeTestCase` wraps each test in a transaction and rolls back**, so tests don't pollute each
-  other. Still clean up explicitly for anything created in `setUpClass`.
+- **`IntegrationTestCase` wraps each test in a transaction and rolls back**, so tests don't pollute
+  each other. Still clean up explicitly for anything created in `setUpClass` — and if you override
+  `setUpClass`, **call `super().setUpClass()`** or the harness never starts.
+- **Declaring test dependencies** is `EXTRA_TEST_RECORD_DEPENDENCIES` at module level (and
+  `IGNORE_TEST_RECORD_DEPENDENCIES` to opt out). The v15 names `test_dependencies` / `test_ignore`
+  are gone.
 - **Call your API functions directly.** They're plain Python — no HTTP needed.
 - **Test the invariants, not the getters.** Every test above is a rule that would cost real money
   or real trust if it broke: can't double-issue, can't exceed the limit, fines are right, retries
@@ -2538,6 +2552,15 @@ placeholder, not the secret.
 **A bare `python script.py`** has no site context. It needs `frappe.init(site=...)` then
 `frappe.connect()`. `bench execute` and `bench console` do this for you.
 
+**`bench init` fails with a dependency mess** → you're not on Python 3.14. v16 pins
+`>=3.14,<3.15`; 3.12 and 3.13 both fail, and the error names a package rather than the interpreter.
+
+**A list came back in the wrong order** → v16 sorts by `creation desc` by default, not `modified`.
+Pass `order_by` explicitly.
+
+**A `has_permission` hook stopped granting access** → it must `return True` now. Returning `None`
+denies.
+
 ### 21.3 Where to look when it breaks
 
 | Symptom | Look at |
@@ -2622,7 +2645,7 @@ Run this against your own app. Anything unchecked is either deliberately not nee
 
 ```bash
 # bench / site
-bench init frappe-bench --frappe-branch version-15
+bench init frappe-bench --frappe-branch version-16
 bench new-site library.localhost
 bench --site library.localhost set-config developer_mode 1
 bench --site library.localhost add-to-hosts
@@ -2685,7 +2708,7 @@ frappe.get_doc(dt, name, for_update=True)    # SELECT … FOR UPDATE
 # context
 frappe.session.user, frappe.get_roles(), frappe.only_for([...])
 frappe.form_dict, frappe.local.site, frappe.conf.get("key")
-frappe.utils.get_url(), frappe.flags.in_test
+frappe.utils.get_url(), frappe.in_test
 
 # feedback / errors
 frappe.throw(_("...")), frappe.msgprint(_("..."), indicator="green", alert=True)
@@ -2740,6 +2763,67 @@ stops being a setting and starts being the thing that makes Frappe deployable.
 
 - **The deep version of this guide** — the same tour against a production app, with the real-world
   edge cases left in: [`frappe-app-from-scratch.md`](frappe-app-from-scratch.md).
-- **Official docs** — <https://frappeframework.com/docs/v15>.
+- **Official docs** — <https://docs.frappe.io/framework>.
 - **Read the framework.** `apps/frappe/frappe/` is a readable codebase, and every DocType JSON in it
   is an example of the file you just learned to write.
+
+---
+
+## 24. Coming from v15
+
+This guide is v16 throughout. If you have a v15 app to port, or v15 habits to unlearn, here's what
+actually changed. The framework's shape did not: DocTypes, hooks, controllers, whitelisting, the
+query builder and the desk API all work the same.
+
+**Environment**
+
+| | v15 | v16 |
+|---|---|---|
+| Python | 3.10+ | **3.14**, pinned `>=3.14,<3.15` |
+| Node | 18+ | **24+** |
+| PDF | wkhtmltopdf | Chrome/Chromium, selectable in Print Settings |
+
+The Python pin is the one that bites: v16 will not install on 3.12 or 3.13, and the failure looks
+like an unrelated dependency conflict. Set up 3.14 first.
+
+**Renames you'll hit immediately**
+
+| v15 | v16 |
+|---|---|
+| `frappe.tests.utils.FrappeTestCase` | `frappe.tests.IntegrationTestCase` / `UnitTestCase` |
+| `test_dependencies` | `EXTRA_TEST_RECORD_DEPENDENCIES` |
+| `test_ignore` | `IGNORE_TEST_RECORD_DEPENDENCIES` |
+| `frappe.flags.in_test` | `frappe.in_test` |
+| `has_permission(..., raise_exception=…)` | `print_logs=…` |
+| `/app` | `/desk` (`/app` redirects; the `/apps` page is gone) |
+
+**Behaviour changes — these are the dangerous ones**
+
+- **Default sort flipped to `creation desc`.** In v15, list views and the query APIs implicitly
+  sorted by `modified`. In v16 `frappe.get_all`, `frappe.get_list`, `frappe.db.get_value`,
+  `frappe.db.get_values` and `frappe.qb.get_query` all default to `creation desc`. Anything that
+  quietly relied on "most recently touched first" now returns something else. Pass
+  `order_by="modified desc"` wherever you meant it.
+- **`has_permission` hooks must return `True` explicitly.** Returning `None` no longer grants
+  permission. Audit every one — this fails closed and silently.
+- **`frappe.db.commit()` is unsupported inside document hooks.** It was always wrong (§9); now it's
+  enforced.
+- **`frappe.sendmail(..., now=True)` no longer commits** the transaction.
+- **`get_doc(doctype, name, field=value)`** no longer sets those values implicitly.
+- **`frappe.db.get_value` casts** single-DocType results to real types instead of returning strings.
+- **`override_doctype` classes** must now inherit from the class they override.
+- **These endpoints require POST**: `logout`, `web_logout`, `upload_file`,
+  `frappe.www.login.send_login_link`.
+
+**Moved or removed**
+
+Energy Points, Newsletter, Blog and Backup Integrations are standalone apps now — install them if
+you depend on them. GeoIP and the Transaction Log DocType are gone. System Console is
+Administrator-only by default. Report / Dashboard Chart / Page JS is evaluated as an IIFE, so
+top-level `var` no longer leaks globally.
+
+**Workspaces.** Rebuilt in v16, and **modified standard workspaces are overwritten on migrate** —
+back yours up before upgrading. Your own module workspace, shipped as a fixture, is fine.
+
+The official migration guide is the authority, and worth reading in full before porting a live site:
+<https://github.com/frappe/frappe/wiki/Migrating-to-version-16>.
