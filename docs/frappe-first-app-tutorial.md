@@ -1,7 +1,19 @@
 # Your first Frappe app — a complete, simple walkthrough
 
-Build a whole Frappe v15 app by hand, from an empty directory, using an example small enough to
-actually type in front of an audience: a **library**. Books, members, loans. That's it.
+Build a whole Frappe v15 app the way people actually build them: **let the tools generate the
+boilerplate, then write the parts that carry real decisions.** The example is small enough to finish
+in an hour — a **library**. Books, members, loans. That's it.
+
+Two commands do the typing nobody should be doing by hand:
+
+```bash
+bench new-app library                   # the whole app skeleton, in one command
+bench --site library.localhost new-doctype  # …or just draw the DocType in the browser
+```
+
+What's left after that is the actual work, and it's what this guide is about: **reading** the JSON
+the tools generate until you know every key in it, then hand-writing the controllers, the API, the
+hooks, the tasks and the tests — the code no generator can write for you.
 
 The example is deliberately boring. The *coverage* is not — by the end you will have touched every
 part of a Frappe app that a real one needs:
@@ -29,8 +41,8 @@ part of a Frappe app that a real one needs:
 | 0 | [What we're building](#0-what-were-building) | The library, in five DocTypes |
 | 1 | [The four words](#1-the-four-words-bench-site-app-doctype) | bench, site, app, DocType |
 | 2 | [Getting a bench and a site](#2-getting-a-bench-and-a-site) | Install, developer mode |
-| 3 | [The app skeleton, by hand](#3-the-app-skeleton-by-hand) | The seven files an app needs |
-| 4 | [Your first DocType: Book](#4-your-first-doctype-book) | DocType JSON, field by field |
+| 3 | [Scaffold the app](#3-scaffold-the-app) | `bench new-app`, and what it wrote |
+| 4 | [Your first DocType: Book](#4-your-first-doctype-book) | Generate it, then read the JSON |
 | 5 | [Member, child table, Settings](#5-member-child-table-settings) | Naming, `istable`, `issingle` |
 | 6 | [Loan: a submittable document](#6-loan-a-submittable-document) | `docstatus`, submit, cancel, amend |
 | 7 | [Controllers and validation](#7-controllers-and-validation) | The lifecycle, in order |
@@ -133,8 +145,9 @@ bench --site library.localhost clear-cache
 ```
 
 Developer mode is what makes schema edits in the browser get written back to JSON files in your
-app — that is, into git. Without it your schema exists only in one database. We're hand-writing the
-JSON anyway, but keep it on: it also gives you real tracebacks.
+app — that is, into git. **Without it, a DocType you create in the UI exists only in that one
+database and can never be deployed anywhere.** This is the single setting that turns the browser
+into a code generator instead of a dead end. It also gives you real tracebacks.
 
 ```bash
 bench start          # http://library.localhost:8000 — log in as Administrator
@@ -142,16 +155,38 @@ bench start          # http://library.localhost:8000 — log in as Administrator
 
 ---
 
-## 3. The app skeleton, by hand
+## 3. Scaffold the app
 
-`bench new-app` generates about thirty files. An app needs seven. Type them.
+One command. It asks you a handful of questions (app title, publisher, email, licence) and writes
+the whole skeleton:
 
 ```bash
-mkdir -p ~/frappe-bench/apps/library
-cd ~/frappe-bench/apps/library
+cd ~/frappe-bench
+bench new-app library
+# App Title (default: Library): Library
+# App Description: A small library: books, members, loans
+# App Publisher: Your Name
+# App Email: you@example.com
+# App License (default: mit): mit
 ```
 
-Target layout — note the **doubled `library`**, which confuses everyone once:
+Then install it onto the site:
+
+```bash
+bench --site library.localhost install-app library
+bench --site library.localhost list-apps
+# frappe
+# library
+```
+
+Done — a working, empty Frappe app. **The rest of this section is about reading what it just
+wrote**, because you'll be editing four of these files constantly and the layout confuses everyone
+exactly once.
+
+### 3.1 What it generated
+
+`bench new-app` writes about thirty files. Most are optional scaffolding (CI config, linter config,
+a JS build entry point). These are the ones that matter — note the **doubled `library`**:
 
 ```
 library/                    ← repo root
@@ -173,7 +208,9 @@ Two levels because **app** and **module** are different things. The app is the p
 groups DocTypes *inside* it. (ERPNext ships "Accounts", "Stock", "Manufacturing" — all one app.)
 Our app ships one module, named after itself.
 
-### 3.1 `pyproject.toml`
+Four of those files you will touch constantly, so it's worth knowing what each one is actually for.
+
+### 3.2 `pyproject.toml`
 
 ```toml
 [project]
@@ -203,22 +240,24 @@ quote-style = "double"
 indent-style = "tab"
 ```
 
-`dynamic = ["version"]` means flit reads `__version__` from the package — which is why the next
-file is mandatory. And tabs, not spaces: that's the Frappe ecosystem convention.
+Two things here you'd get wrong if you wrote it yourself:
 
-### 3.2 `library/__init__.py`
+- **`frappe` is not in `dependencies`.** Bench installs and manages it; pinning it here fights the
+  bench. Your app's real dependencies (`qrcode`, `requests`, whatever) do go here.
+- **`dynamic = ["version"]`** means flit reads `__version__` from `library/__init__.py`. That file
+  contains exactly one line — `__version__ = "0.0.1"` — and Frappe, flit and the Apps screen all
+  read it. Bump it when you release.
 
-```python
-__version__ = "0.0.1"
-```
+And tabs, not spaces: that's the ecosystem convention, and what the generated `ruff` config enforces.
 
-The whole file. Frappe reads it, flit reads it, the Apps screen shows it.
-
-### 3.3 `library/hooks.py`
+### 3.3 `library/hooks.py` — the one you'll live in
 
 This file *is* the contract between your app and the framework. Frappe imports it and looks for
-specific module-level names. Nothing registers dynamically — if it isn't in `hooks.py`, it doesn't
-happen. Start minimal:
+specific module-level names. Nothing registers dynamically — **if it isn't in `hooks.py`, it doesn't
+happen.**
+
+`bench new-app` writes it pre-filled with the app metadata and then about 200 lines of *commented-out
+examples* — every extension point the framework offers, with its expected shape:
 
 ```python
 app_name = "library"
@@ -227,9 +266,32 @@ app_publisher = "Your Name"
 app_description = "A small library: books, members, loans"
 app_email = "you@example.com"
 app_license = "mit"
+
+# ------------------------------------------------------------------
+# everything below here arrives commented out. Uncomment what you need.
+# ------------------------------------------------------------------
+
+# app_include_css = "/assets/library/css/library.css"
+# app_include_js = "/assets/library/js/library.js"
+
+# doc_events = {
+# 	"*": {
+# 		"on_update": "method",
+# 		"on_cancel": "method",
+# 		"on_trash": "method"
+# 	}
+# }
+
+# scheduler_events = {
+# 	"daily": [
+# 		"library.tasks.daily"
+# 	],
+# }
 ```
 
-Almost every section below adds a line here.
+**Read that file top to bottom once.** It's a free catalogue of everything a Frappe app can hook
+into, and half of this guide is just uncommenting the right lines. Leave the comments in place —
+they're the documentation you'll come back to.
 
 ### 3.4 `library/modules.txt`
 
@@ -237,50 +299,87 @@ Almost every section below adds a line here.
 Library
 ```
 
-One module name per line, **Title Case**. This creates the `Module Def` record on install, and it's
-how a DocType's `"module": "Library"` resolves back to your app. The directory is the snake_case
-of it: `library/library/`.
+One module name per line, **Title Case** — generated from the app title. This creates the
+`Module Def` record on install, and it's how a DocType's `"module": "Library"` resolves back to your
+app. The directory is the snake_case of it: `library/library/`.
+
+Add a line here if you want a second module, and create the matching directory (with an
+`__init__.py`) yourself.
 
 ### 3.5 `library/patches.txt`
 
 ```
 [pre_model_sync]
-# runs before doctypes are migrated
+# Patches added in this section will be executed before doctypes are migrated
 
 [post_model_sync]
-# runs after doctypes are migrated
+# Patches added in this section will be executed after doctypes are migrated
 ```
 
-Empty for now; §18 fills it in.
+Generated empty. §18 fills it in.
 
 ### 3.6 The `__init__.py` files
 
-Frappe walks directories with `importlib`. Every package level needs one:
+Frappe walks your app with `importlib`, so every package level needs one. `bench new-app` creates
+them — but *you* create the next ones, and a missing `__init__.py` is the most common day-one bug by
+a wide margin. It produces a `ModuleNotFoundError` on migrate that reads like a framework problem
+and isn't.
 
-```bash
-touch library/library/__init__.py
-touch library/library/doctype/__init__.py
-```
+You'll need to remember this when you hand-create a directory: a new module, `patches/v1_0/`, a
+`report/` folder. The DocType generator (§4) handles its own.
 
-A missing `__init__.py` gives you a `ModuleNotFoundError` on migrate that looks like a framework
-bug and isn't. It is the most common day-one mistake, by a wide margin.
+### 3.7 What to delete
 
-### 3.7 Install it
+Scaffolding you're not using is noise in code review. If you're not writing front-end assets, the
+`public/` build entry and `.eslintrc` can go. If you're not using GitHub Actions, drop `.github/`.
+Keep `pyproject.toml`, `hooks.py`, `modules.txt`, `patches.txt`, `license.txt`, and the
+`__init__.py` files — those seven are the app.
 
-```bash
-cd ~/frappe-bench
-bench get-app apps/library                        # pip install -e + register in sites/apps.txt
-bench --site library.localhost install-app library
-bench --site library.localhost list-apps
-# frappe
-# library
-```
+### 3.8 What to generate, what to write
 
-You now have a working, empty Frappe app in seven hand-written files.
+The dividing line, and the stance of this whole guide: **generate anything mechanical, write
+anything that encodes a decision.**
+
+| Generate it | Write it by hand |
+|---|---|
+| The app skeleton (`bench new-app`) | `hooks.py` entries — every one is a decision |
+| DocType JSON (draw it in the UI) | Controllers: `validate`, `before_submit`, `on_cancel` |
+| Child tables, Single settings | `api.py` — role checks, locking, idempotency |
+| Report and Web Form scaffolds | Scheduler tasks and background jobs |
+| Workspaces, dashboard charts, notifications | `install.py` / `uninstall.py` |
+| Print format layouts (or the builder) | Patches |
+| — | Tests |
+
+Two consequences worth stating plainly:
+
+- **Every generated file still has to be read.** A DocType JSON you've never opened is a schema you
+  don't know — and it's the file that shows up in your code review, not the form you clicked.
+- **Nothing generates the interesting half.** No wizard writes "a book can't be issued twice",
+  "cancel must reverse submit", or "check the role before you trust the caller". That's the app.
 
 ---
 
 ## 4. Your first DocType: Book
+
+**Don't type this one either.** With developer mode on, you draw a DocType in the browser and Frappe
+writes the JSON into your app, ready to commit:
+
+> `/app/doctype/new` → Name: `Book`, Module: `Library`, add fields, **Save**
+
+That writes `apps/library/library/library/doctype/book/book.json` plus a stub `book.py` and an
+`__init__.py`. Same result from the CLI if you prefer:
+
+```bash
+bench --site library.localhost new-doctype "Book" --module Library
+```
+
+So why does the rest of this section walk through the JSON key by key? Because **the file is the
+source of truth, not the form.** You'll be reading it in code review, editing it in a merge
+conflict, and reaching for properties the form makes hard to find. And a handful of things — bulk
+reordering fields, `depends_on` expressions, permission rows — are genuinely faster to type than to
+click.
+
+The workflow that works: **draw the rough shape in the UI, then open the JSON and finish it.**
 
 A DocType is a directory of up to four files:
 
@@ -296,7 +395,10 @@ Directory and file names are the **snake_case of the DocType name**. `Library Me
 `library_member/library_member.py`. Get it wrong and Frappe won't find your controller — quietly,
 in some code paths.
 
-### 4.1 `book.json`
+### 4.1 `book.json` — the file the form wrote
+
+Here's the finished article. Draw roughly this in the UI, then open the file and reconcile it
+against what follows.
 
 ```json
 {
@@ -490,6 +592,9 @@ the message. Wrap user-facing strings in `_()` so they can be translated.
 
 ### 4.3 Sync it
 
+Saving in the UI already synced the database. If you edited the JSON by hand, or pulled someone
+else's changes, run:
+
 ```bash
 bench --site library.localhost migrate
 ```
@@ -498,6 +603,10 @@ bench --site library.localhost migrate
 creating tables, adding columns, adding indexes, running patches. It's idempotent, and it is how
 *all* schema change happens in Frappe. There are no Alembic-style migration files for schema: the
 JSON **is** the migration.
+
+**The loop, in practice:** edit in the UI → the JSON changes on disk → `git diff` to see exactly
+what you did → commit. Or edit the JSON → `migrate` → refresh. Both directions work, and the file
+is the truth either way. That is why reading it matters.
 
 Open <http://library.localhost:8000/app/book/new>. You have a form with validation, a list view
 with filters, a REST endpoint, permissions and an audit trail — from one JSON file and six lines of
@@ -2599,21 +2708,27 @@ Each block ends with something visibly working, so nobody takes the payoff on fa
 
 | # | Min | Block | Ends with |
 |---|---|---|---|
-| 1 | 0–8 | §1 four words + tour an existing DocType in the desk | Everyone knows what bench/site/app/DocType mean |
-| 2 | 8–16 | §3 type the seven skeleton files, `get-app`, `install-app` | `bench list-apps` shows your app |
-| 3 | 16–28 | §4 hand-write `Book`, `migrate` | A working form, list and REST endpoint from one JSON |
-| 4 | 28–34 | §5 paste Member + child + Settings, narrate naming/`istable`/`issingle` | Four tables |
-| 5 | 34–44 | §6 `Loan` — submittable, `before_submit`, `on_submit`, `on_cancel` | Issue a book in the desk; the Book flips to On Loan |
-| 6 | 44–52 | §8–9 `issue_book` / `return_book`, then curl them | The same operation over HTTP, from outside |
+| 1 | 0–7 | §1 four words + tour an existing DocType in the desk | Everyone knows what bench/site/app/DocType mean |
+| 2 | 7–13 | §3 `bench new-app`, `install-app`, then **read** `hooks.py` together | Their app exists; they've seen the catalogue of hooks |
+| 3 | 13–25 | §4 draw `Book` in the UI — then open the JSON it wrote, side by side | The generated file, explained key by key |
+| 4 | 25–32 | §5 Member + child + Settings, narrating naming / `istable` / `issingle` | Four tables |
+| 5 | 32–43 | §6 `Loan` — submittable, `before_submit`, `on_submit`, `on_cancel` | Issue a book in the desk; the Book flips to On Loan |
+| 6 | 43–52 | §8–9 `issue_book` / `return_book`, then curl them | The same operation over HTTP, from outside |
 | 7 | 52–60 | §13 the "Issue Book" button, or §14 the public catalogue | A librarian-usable screen, or a public page |
 
 **Set up before you start:** a bench and a site, developer mode on, `bench start` already running,
-your editor open at the app directory, and a second terminal ready for `bench migrate`.
+your editor open at the app directory (with the file tree visible — the point of block 3 is watching
+the JSON appear), and a second terminal ready for `bench migrate`.
+
+**The move that sells it:** in block 3, keep the browser and the editor side by side. Add a field in
+the form, hit Save, and let them watch `book.json` change on disk. That's the moment developer mode
+stops being a setting and starts being the thing that makes Frappe deployable.
 
 **If you have to cut, land these three:**
 
 1. **Schema is the app.** One JSON file bought a table, a form, a list, an API, permissions and an
-   audit log. Time spent on DocType design pays back ten times over.
+   audit log — and you drew it in a browser. Time spent on DocType design pays back ten times over;
+   time spent typing boilerplate pays back nothing.
 2. **Submittable documents are the framework's spine.** Draft → submitted → cancelled, with
    `on_cancel` mirroring `on_submit`, is how every serious Frappe app models things that happened.
 3. **Whitelisted is not authorised.** `@frappe.whitelist()` is a public door. The role check on the

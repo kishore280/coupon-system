@@ -1,8 +1,9 @@
 # Building a Frappe app from scratch — a hands-on guide
 
-A complete, hand-written walkthrough of building a real Frappe v15 app: no `bench new-app`
-boilerplate, no scaffolding wizards, no drawing DocTypes in the UI. Every file is typed by hand so
-you can see exactly what the framework needs and why.
+A complete walkthrough of building a real Frappe v15 app, file by file. In practice you'd run
+`bench new-app` and draw DocTypes in the browser — and you should; nobody hand-types boilerplate.
+But the generator writes files you then have to *own*, so this guide walks every one of them as if
+it were typed, because reading them is the part that makes you fluent.
 
 The app we build is **`coupon_system`** — the same app this repo contains. We build its core from
 zero (campaigns → cards → a points ledger → an API a mobile app calls), then point at the real
@@ -10,10 +11,10 @@ files where the production version goes further. So the demo is not a toy: at th
 working loyalty-points backend, and every concept has a real counterpart in this codebase.
 
 > **Teaching from this?** [`frappe-first-app-tutorial.md`](frappe-first-app-tutorial.md) runs the
-> same tour against a deliberately tiny example app (a library) instead of a production system —
-> small enough to hand-write live, and it covers a few things this guide doesn't need (submittable
-> documents, background jobs, email, print formats, workflow). Use that one to teach; use this one
-> to understand how the real app here works.
+> same tour against a deliberately tiny example app (a library) instead of a production system, is
+> organised around the real generate-then-edit workflow, and covers a few things this guide doesn't
+> need (submittable documents, background jobs, email, print formats, workflow). **Use that one to
+> teach.** Use this one to understand how the app in this repo actually works.
 
 **Audience:** developers who know Python and have seen an ERPNext screen, but have never written a
 Frappe app.
@@ -29,7 +30,7 @@ self-paced reading.
 | 0 | [What we're building](#0-what-were-building) | The scope of the demo |
 | 1 | [The mental model](#1-the-mental-model-bench-site-app-doctype) | bench / site / app / DocType |
 | 2 | [Prerequisites](#2-prerequisites-bench-and-a-site) | Getting a bench + site running |
-| 3 | [Hand-writing the app skeleton](#3-hand-writing-the-app-skeleton) | The 7 files an app must have |
+| 3 | [The app skeleton](#3-the-app-skeleton) | `bench new-app`, and the 7 files that matter |
 | 4 | [Your first DocType, by hand](#4-your-first-doctype-by-hand-coupon-campaign) | DocType JSON, field by field |
 | 5 | [The rest of the data model](#5-the-rest-of-the-data-model) | Naming rules, Single, child tables, virtual fields |
 | 6 | [The ledger pattern](#6-the-ledger-pattern-never-store-a-balance) | Derived balances, query builder |
@@ -155,16 +156,20 @@ bench start
 
 ---
 
-## 3. Hand-writing the app skeleton
+## 3. The app skeleton
 
-`bench new-app` would generate ~30 files. An app actually only *needs* seven. We type them.
+In real life this is one command:
 
 ```bash
-mkdir -p ~/frappe-bench/apps/coupon_system
-cd ~/frappe-bench/apps/coupon_system
+cd ~/frappe-bench
+bench new-app coupon_system     # asks for title, publisher, email, licence
 ```
 
-The layout we're heading for — note the **doubled app name**, which trips up everyone on day one:
+It writes ~30 files. Seven of them *are* the app; the rest is CI and linter scaffolding you can
+delete. Below is what those seven contain and why — read it as an annotated tour of what the
+generator just handed you, not as a typing exercise.
+
+The layout — note the **doubled app name**, which trips up everyone on day one:
 
 ```
 coupon_system/                  ← repo root
@@ -310,11 +315,16 @@ bench --site hq.localhost list-apps
 # coupon_system
 ```
 
-You now have a working (empty) Frappe app, hand-written, in seven files.
+You now have a working (empty) Frappe app — seven files that matter, and you know what each is for.
 
 ---
 
 ## 4. Your first DocType, by hand: Coupon Campaign
+
+With developer mode on you'd normally create this at `/app/doctype/new` (or
+`bench --site hq.localhost new-doctype "Coupon Campaign" --module "Coupon System"`) and let Frappe
+write the JSON. Read on anyway: the file is the source of truth, it's what shows up in code review,
+and a few properties are faster to type than to click.
 
 A DocType is a directory of up to four files:
 
