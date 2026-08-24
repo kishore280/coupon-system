@@ -22,9 +22,14 @@ self-contained stores. This file is only the map — the knowledge lives in the 
   service-account wiring, and balance semantics. Read this before deploying or debugging a live site.**
 
 ## Learning Frappe (or demoing this app)
-- [docs/frappe-app-from-scratch.md](docs/frappe-app-from-scratch.md) — build this app's core by hand,
-  from an empty directory: DocType JSON, controllers, whitelisted API, hooks, desk JS, tests. Doubles
-  as a "how does Frappe work" reference and a 90-minute demo run-sheet.
+- [docs/frappe-first-app-tutorial.md](docs/frappe-first-app-tutorial.md) — **start here to teach.**
+  A whole app built by hand around a deliberately tiny example (a library: books, members, loans),
+  covering every part a real Frappe app needs — including submittable documents, background jobs,
+  email, print formats and workflow. Ends with a completeness checklist and a 60-minute run-sheet.
+  No ERPNext required.
+- [docs/frappe-app-from-scratch.md](docs/frappe-app-from-scratch.md) — the same tour against **this**
+  app's core: DocType JSON, controllers, whitelisted API, hooks, desk JS, tests, cross-linked to the
+  live source files. Heavier example, more real-world edge cases; 90-minute run-sheet.
 
 ## Rules of thumb
 - Secrets are **`Password`** fields, read with `get_password(...)` — never plaintext `Data`.

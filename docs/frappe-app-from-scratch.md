@@ -9,6 +9,12 @@ zero (campaigns → cards → a points ledger → an API a mobile app calls), th
 files where the production version goes further. So the demo is not a toy: at the end you have a
 working loyalty-points backend, and every concept has a real counterpart in this codebase.
 
+> **Teaching from this?** [`frappe-first-app-tutorial.md`](frappe-first-app-tutorial.md) runs the
+> same tour against a deliberately tiny example app (a library) instead of a production system —
+> small enough to hand-write live, and it covers a few things this guide doesn't need (submittable
+> documents, background jobs, email, print formats, workflow). Use that one to teach; use this one
+> to understand how the real app here works.
+
 **Audience:** developers who know Python and have seen an ERPNext screen, but have never written a
 Frappe app.
 **Format:** works as a ~90-minute live demo (see [§21 Demo run-sheet](#21-demo-run-sheet)) or as
