@@ -21,6 +21,11 @@ self-contained stores. This file is only the map — the knowledge lives in the 
 - [docs/operations.md](docs/operations.md) — **deployment model, the gotchas that cost hours, gateway
   service-account wiring, and balance semantics. Read this before deploying or debugging a live site.**
 
+## Learning Frappe (or demoing this app)
+- [docs/frappe-app-from-scratch.md](docs/frappe-app-from-scratch.md) — build this app's core by hand,
+  from an empty directory: DocType JSON, controllers, whitelisted API, hooks, desk JS, tests. Doubles
+  as a "how does Frappe work" reference and a 90-minute demo run-sheet.
+
 ## Rules of thumb
 - Secrets are **`Password`** fields, read with `get_password(...)` — never plaintext `Data`.
 - A store's identity = its `get_url()` and MUST equal its `Coupon Store` row on HQ, everywhere.
