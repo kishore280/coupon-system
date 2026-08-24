@@ -722,10 +722,29 @@ class LibraryMember(Document):
 		self.set_onload("books_on_loan", frappe.db.count(
 			"Loan", {"member": self.name, "docstatus": 1, "status": ["!=", "Returned"]}
 		))
-		self.set_onload("outstanding_fine", frappe.db.get_value(
-			"Loan", {"member": self.name, "docstatus": 1, "fine_paid": 0}, "sum(fine_amount)"
-		) or 0)
+		# Aggregates go through the dict form, not a "sum(...)" string — see the note below.
+		fine_row = frappe.db.get_all(
+			"Loan",
+			filters={"member": self.name, "docstatus": 1, "fine_paid": 0},
+			fields=[{"SUM": "fine_amount", "as": "total"}],
+		)
+		# SUM over zero rows still returns one row, with total = None — hence the `or 0`.
+		self.set_onload("outstanding_fine", (fine_row[0].total if fine_row else 0) or 0)
 ```
+
+> **Aggregates are dict syntax now.** `frappe.get_all` / `frappe.db.get_all` run on the query-builder
+> backend, and a raw SQL function passed as a string is rejected:
+>
+> ```
+> SQL functions are not allowed as strings in SELECT: sum(fine_amount).
+> Use dict syntax like {'COUNT': '*'}
+> ```
+>
+> So `fields=["sum(fine_amount)"]` becomes `fields=[{"SUM": "fine_amount", "as": "total"}]`, and you
+> read the aliased column off the row. Same for `COUNT`, `AVG`, `MIN`, `MAX`. Two things that catch
+> people: the result is a **list of rows**, not a scalar — and `SUM` over zero matching rows returns
+> one row whose value is `None`, not `0`. `frappe.db.count()` is unaffected; it's a dedicated API,
+> not a field expression.
 
 This is a habit worth forming early: **derive, don't store.** A counter you keep in a column will
 eventually disagree with the rows it's meant to summarise. A `COUNT(*)` never does. Store a
@@ -1204,9 +1223,12 @@ def member_summary(member):
 			l["title"] = titles.get(l.book, l.book)
 			l["overdue"] = str(l.due_date) < today()
 
-		fine = frappe.db.get_value(
-			"Loan", {"member": member, "docstatus": 1, "fine_paid": 0}, "sum(fine_amount)"
-		) or 0
+		fine_row = frappe.db.get_all(
+			"Loan",
+			filters={"member": member, "docstatus": 1, "fine_paid": 0},
+			fields=[{"SUM": "fine_amount", "as": "total"}],
+		)
+		fine = (fine_row[0].total if fine_row else 0) or 0
 
 		return {
 			"success": True,
@@ -2558,6 +2580,9 @@ placeholder, not the secret.
 **A list came back in the wrong order** → v16 sorts by `creation desc` by default, not `modified`.
 Pass `order_by` explicitly.
 
+**`SQL functions are not allowed as strings in SELECT`** → you passed `"sum(x)"` or `"count(*)"` as
+a field. Use `fields=[{"SUM": "x", "as": "total"}]`. `frappe.db.count()` still works as-is.
+
 **A `has_permission` hook stopped granting access** → it must `return True` now. Returning `None`
 denies.
 
@@ -2689,6 +2714,7 @@ frappe.db.exists(dt, name_or_filters)
 frappe.db.count(dt, filters)
 frappe.get_all(dt, filters=…, or_filters=…, fields=…, order_by=…,
                limit_page_length=0, pluck="title", as_list=True)
+frappe.get_all(dt, filters=…, fields=[{"SUM": "amount", "as": "total"}])   # aggregates: dict, not "sum(x)"
 
 # write
 doc = frappe.new_doc(dt); doc.x = 1; doc.insert(ignore_permissions=True)
@@ -2804,6 +2830,12 @@ like an unrelated dependency conflict. Set up 3.14 first.
   `frappe.db.get_values` and `frappe.qb.get_query` all default to `creation desc`. Anything that
   quietly relied on "most recently touched first" now returns something else. Pass
   `order_by="modified desc"` wherever you meant it.
+- **SQL functions as strings are rejected.** `get_all`/`get_list` now run on the query-builder
+  backend, so `fields=["sum(fine_amount)"]` raises
+  `SQL functions are not allowed as strings in SELECT`. Use
+  `fields=[{"SUM": "fine_amount", "as": "total"}]` and read the aliased column. Applies to `COUNT`,
+  `AVG`, `MIN`, `MAX` too, and to the `fieldname` argument of `frappe.db.get_value`. This one is
+  easy to miss because it only fires on the code path that runs the query.
 - **`has_permission` hooks must return `True` explicitly.** Returning `None` no longer grants
   permission. Audit every one — this fails closed and silently.
 - **`frappe.db.commit()` is unsupported inside document hooks.** It was always wrong (§9); now it's
