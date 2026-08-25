@@ -157,6 +157,11 @@ into a code generator instead of a dead end. It also gives you real tracebacks.
 bench start          # http://mysite.local:8000 — log in as Administrator
 ```
 
+One thing worth doing now rather than discovering in §11: a fresh site has **no Email Account**, and
+`frappe.sendmail()` on such a site *raises* `OutgoingEmailError` rather than quietly doing nothing.
+If you plan to run the reminder job, create any outgoing account (Settings → Email Account — a dummy
+SMTP host is fine, nothing has to actually deliver), or be ready to catch the error.
+
 ---
 
 ## 3. Scaffold the app
@@ -705,7 +710,15 @@ you save yourself a join forever. Otherwise use a series.
 }
 ```
 
-Two things to point out:
+Three things to point out:
+
+**`"autoname": "field:email"` is load-bearing — don't skip it.** It makes the email address *be* the
+document name, which every later section quietly depends on. `member="ada@example.com"` works as a
+document name in `frappe.get_doc`, as a `Link` value on Loan, as the `recipients` address in the
+reminder email (§11), and as the identity the `User` hook matches on (§10). Name this DocType any
+other way — a series, a hash — and all of that silently stops lining up: you'd need a lookup from
+email to member ID in half a dozen places. Set it, and confirm the JSON says both
+`"autoname": "field:email"` **and** `"naming_rule": "By fieldname"`.
 
 **`"options": "Email"` on a `Data` field** gives you format validation and a `mailto:` link for
 free. `Phone`, `URL` and `Name` work the same way. People miss this and hand-write validators.
@@ -952,14 +965,28 @@ time a record represents *something that happened*, and rebuild it out of a `Sel
 }
 ```
 
-Three requirements that are easy to miss and annoying to debug:
+Four fields in there look like boilerplate and are not. Get any of them wrong and the failure shows
+up later, somewhere else, as something that reads like a framework bug:
 
-1. **`amended_from`** — a submittable DocType must have this exact field, `Link` to itself,
-   `no_copy` and `read_only`. Amend breaks without it.
+1. **`amended_from` is mandatory, not optional.** Every submittable DocType must carry this exact
+   field — `"fieldname": "amended_from"`, `Link` to itself, `no_copy: 1`, `read_only: 1`. It is not
+   decoration and it is not something the form builder adds for you. Omit it and Amend fails: the
+   copied draft has nowhere to record what it amends. Copy the field verbatim into every submittable
+   DocType you ever write.
+
 2. **`allow_on_submit: 1`** on everything that legitimately changes *after* submission — here
-   `status`, `return_date`, `fine_amount`, `fine_paid`. A return would otherwise be impossible.
-3. **`submit` / `cancel` / `amend`** in the permission rows. Without them the buttons never appear,
-   even for System Manager.
+   `status`, `return_date`, `fine_amount`, `fine_paid`. Submitted documents are immutable by
+   default, so without this a return is simply impossible: `mark_returned()` throws on a document it
+   is supposed to be closing.
+
+3. **The fine fields are load-bearing too.** `fine_per_day` holds the snapshot taken at issue time
+   (§6.2), `fine_amount` is written at return, `fine_paid` gates the outstanding-fine aggregate in
+   §5.2 and §8. Drop any one and the code in the next three sections has nothing to write to — and
+   because `db_set` on a missing fieldname fails quietly in some paths, you get a zero fine rather
+   than an error.
+
+4. **`submit` / `cancel` / `amend` in the permission rows.** Without them the buttons never appear,
+   even for System Manager, and you'll spend twenty minutes convinced `is_submittable` didn't take.
 
 ### 6.2 `loan/loan.py`
 
@@ -1576,8 +1603,25 @@ frappe.sendmail(
 )
 ```
 
-In dev, nothing is actually sent unless an outgoing Email Account is configured — inspect
-`/app/email-queue` to see what *would* have gone out.
+> **On a fresh dev site, `frappe.sendmail()` raises — it is not a silent no-op.** With zero Email
+> Accounts configured you get `frappe.email.doctype.email_account.email_account.OutgoingEmailError:
+> No default outgoing account found`, thrown from whatever called it. So the due-date reminder job
+> above doesn't quietly do nothing on a clean install — it fails. And note what it is:
+> `OutgoingEmailError` subclasses `Exception` directly, **not** `ValidationError` — so it sails
+> straight through the `except frappe.ValidationError` boundary every endpoint in §8 relies on, and
+> surfaces as a 500 instead of a tidy `{"success": False}`. Either create an Email Account
+> (Settings → Email Account — a dummy SMTP host is fine, nothing has to deliver), or catch it
+> explicitly:
+>
+> ```python
+> try:
+> 	frappe.sendmail(recipients=[loan.member], subject=..., message=...)
+> except frappe.OutgoingEmailError:
+> 	frappe.log_error(frappe.get_traceback(), "Reminder email skipped — no outgoing account")
+> ```
+>
+> Once an account exists, mail is queued rather than sent inline: inspect `/app/email-queue` to see
+> what went out.
 
 > **Notifications without code.** The **Notification** DocType sends an email/system alert on a
 > document event ("Loan is overdue", "new Member created") with conditions set in the UI, no Python
@@ -2593,7 +2637,7 @@ denies.
 | Endpoint 500s | `/app/error-log` |
 | Scheduled job didn't run | `/app/scheduled-job-type`, then `bench … enable-scheduler` |
 | Background job vanished | `/app/rq-job`, `bench doctor` |
-| Email never arrived | `/app/email-queue` |
+| Email never arrived | `/app/email-queue` — and check an Email Account exists at all; with none, `sendmail` raises `OutgoingEmailError` |
 | Any request | the `bench start` terminal, and `logs/` in the bench directory |
 | "It worked yesterday" | `/app/version/…` — `track_changes` recorded who changed what |
 
